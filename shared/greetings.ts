@@ -91,3 +91,35 @@ export function pickGreeting(opts: GreetingOptions = {}): string {
   const choices = fresh.length > 0 ? fresh : resolved;
   return choices[Math.floor(random() * choices.length) % choices.length];
 }
+
+/**
+ * Local calendar day as YYYY-MM-DD.
+ *
+ * Deliberately not an ISO timestamp: "today" is what the wall clock says, and
+ * toISOString() would roll the day over at UTC midnight — showing the Monday
+ * greeting on Sunday evening for anyone west of Greenwich.
+ */
+export function localDayKey(date: Date = new Date()): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Whether the weekday line gets used, given what's already happened today.
+ *
+ * Two conditions, and both matter. Having talked to Atla today rules it out —
+ * the line is a greeting, not an interjection. But so does having already
+ * shown it: deriving "first session" from message timestamps alone meant every
+ * new chat opened before sending anything got its own weekday greeting, which
+ * is the opposite of a once-a-day moment.
+ */
+export function shouldUseWeekday(opts: {
+  today: string;
+  lastShown: string;
+  hadConversationToday: boolean;
+}): boolean {
+  if (opts.hadConversationToday) return false;
+  return opts.lastShown !== opts.today;
+}

@@ -64,7 +64,15 @@ import {
   splitMentions,
   splitThinking
 } from "../shared/toolCatalog.js";
-import { GREETING_QUIPS, pickGreeting, resolve as resolveGreeting, timeBlockFor, weekdayFor } from "../shared/greetings.js";
+import {
+  GREETING_QUIPS,
+  localDayKey,
+  pickGreeting,
+  resolve as resolveGreeting,
+  shouldUseWeekday,
+  timeBlockFor,
+  weekdayFor
+} from "../shared/greetings.js";
 
 /**
  * Exercises the main -> renderer -> <webview> path that the model uses to
@@ -919,6 +927,52 @@ export async function runSelfTest(): Promise<void> {
         JSON.stringify(got)
       );
     }
+
+    console.log("\n[selftest] weekday greeting cadence");
+    const weekdayCase = (lastShown: string, hadConversationToday: boolean) =>
+      shouldUseWeekday({ today: "2026-09-02", lastShown, hadConversationToday });
+
+    // The whole point: a fresh day with nothing said yet.
+    check("first chat of a quiet day gets the weekday line", weekdayCase("", false));
+    check("a day never seen before also counts", weekdayCase("2026-09-01", false));
+
+    // The bug this replaced: the line came back on every new chat opened
+    // before sending anything, so five empty chats meant five greetings.
+    check("it does not repeat later the same day", !weekdayCase("2026-09-02", false));
+
+    // Having actually talked today rules it out regardless of what was shown.
+    check("talking today switches to time-based", !weekdayCase("", true));
+    check("talking today wins even if never shown", !weekdayCase("2026-08-30", true));
+
+    // Both conditions have to hold, so the truth table is worth pinning whole.
+    const table: [string, boolean, boolean][] = [
+      ["", false, true],
+      ["", true, false],
+      ["2026-09-02", false, false],
+      ["2026-09-02", true, false]
+    ];
+    for (const [lastShown, had, want] of table) {
+      check(
+        `lastShown=${JSON.stringify(lastShown)} hadToday=${had} -> ${want}`,
+        weekdayCase(lastShown, had) === want
+      );
+    }
+
+    console.log("\n[selftest] local day key");
+    check("day key is the local calendar date", localDayKey(new Date(2026, 8, 2, 13, 30)) === "2026-09-02");
+    check("months and days are zero-padded", localDayKey(new Date(2026, 0, 5)) === "2026-01-05");
+    // The reason this isn't toISOString(): late evening local time is already
+    // tomorrow in UTC for anyone east of Greenwich, and yesterday for anyone
+    // west — either way the weekday line would land on the wrong day.
+    const lateEvening = new Date(2026, 8, 2, 23, 30);
+    check("late evening stays on today's date", localDayKey(lateEvening) === "2026-09-02", localDayKey(lateEvening));
+    const earlyMorning = new Date(2026, 8, 2, 0, 15);
+    check("just after midnight is the new day", localDayKey(earlyMorning) === "2026-09-02", localDayKey(earlyMorning));
+    // Consecutive days must differ, or "once a day" silently becomes "once".
+    check(
+      "the key advances with the day",
+      localDayKey(new Date(2026, 8, 2)) !== localDayKey(new Date(2026, 8, 3))
+    );
 
     console.log("\n[selftest] greetings");
     const greetCases: [string, string | undefined, string][] = [

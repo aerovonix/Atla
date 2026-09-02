@@ -192,6 +192,11 @@ export interface AppSettings {
   fileWriteApproval: boolean;
   /** First run is done. Set by finishing or skipping onboarding. */
   onboarded: boolean;
+  /**
+   * Local day (YYYY-MM-DD) the weekday greeting was last shown, so it lands
+   * once rather than on every new chat opened before the first message.
+   */
+  lastWeekdayGreetingOn: string;
   /** Let the model see and control the desktop outside Atla. */
   desktopEnabled: boolean;
   /** "allowlist" limits it to named apps; "unrestricted" is anywhere. */
@@ -254,6 +259,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // Existing installs are migrated to true at v3 — someone already using Atla
   // has by definition finished setting it up.
   onboarded: false,
+  lastWeekdayGreetingOn: "",
   // On, but it only ever fires when the window is in the background, so it
   // can't interrupt someone who is already watching the answer arrive.
   notifyOnFinish: true,

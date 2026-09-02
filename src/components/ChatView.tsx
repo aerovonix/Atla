@@ -43,7 +43,7 @@ import {
   splitThinking,
   type ToolGroup
 } from "../../shared/toolCatalog";
-import { pickGreeting } from "../../shared/greetings";
+import { localDayKey, pickGreeting, shouldUseWeekday } from "../../shared/greetings";
 import { branchTree } from "../../shared/branching";
 
 function ModelPicker({ conversationId }: { conversationId: string }) {
@@ -797,6 +797,7 @@ export function ChatView({
   const conv = useStore((s) => s.conversations.find((c) => c.id === conversationId));
   const providers = useStore((s) => s.providers);
   const settings = useStore((s) => s.settings);
+  const updateSettings = useStore((s) => s.updateSettings);
   const sendMessage = useStore((s) => s.sendMessage);
   const stopStreaming = useStore((s) => s.stopStreaming);
   const regenerate = useStore((s) => s.regenerate);
@@ -827,16 +828,40 @@ export function ChatView({
 
   // The weekday line is for the day's first chat, so it stays a small moment
   // rather than something you read every time you open a tab.
-  const greeting = useMemo(() => {
+  // Decided once per empty chat and then frozen. It can't be a useMemo any
+  // more: choosing the weekday line also *consumes* it for the day, and a memo
+  // that writes settings would re-run, flip its own input, and visibly swap the
+  // greeting out from under the reader.
+  const [greeting, setGreeting] = useState("");
+  const decidedFor = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!conv || conv.messages.length > 0) {
+      // Not an empty chat, so nothing is being greeted. Left undecided rather
+      // than skipped-and-marked: opening an old conversation must not burn
+      // today's weekday line on a screen that never shows it.
+      decidedFor.current = null;
+      return;
+    }
+    if (decidedFor.current === conversationId) return;
+    decidedFor.current = conversationId;
+
+    const today = localDayKey();
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
-    const firstSessionToday = !conversations.some((c) =>
+    const hadConversationToday = conversations.some((c) =>
       c.messages.some((m) => m.timestamp >= startOfDay.getTime())
     );
-    return pickGreeting({ name: settings.profileName, firstSessionToday });
-    // Keyed on the conversation so it settles once and doesn't reroll mid-type.
+    const weekday = shouldUseWeekday({
+      today,
+      lastShown: settings.lastWeekdayGreetingOn,
+      hadConversationToday
+    });
+
+    setGreeting(pickGreeting({ name: settings.profileName, firstSessionToday: weekday }));
+    if (weekday) updateSettings({ lastWeekdayGreetingOn: today });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationId, settings.profileName]);
+  }, [conversationId, conv?.messages.length]);
 
   if (!conv) return null;
 
