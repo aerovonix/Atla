@@ -3,7 +3,7 @@ import { useStore } from "../state/store";
 import { CloseIcon } from "./icons";
 import { ProviderSettings } from "./ProviderSettings";
 import { PROVIDER_LABELS } from "../../shared/types";
-import type { AppSettings, DashStatus } from "../../shared/types";
+import type { AppSettings, DashStatus, UpdateState } from "../../shared/types";
 import { formatCode } from "../../shared/dashProtocol";
 
 type Tab = "providers" | "general" | "generation" | "browser" | "data";
@@ -379,6 +379,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               <div className="h-px my-4 bg-border" />
 
               <div className="space-y-3">
+                <UpdatePanel />
                 <Switch
                   checked={settings.notifyOnFinish}
                   onChange={(v) => set("notifyOnFinish", v)}
@@ -721,6 +722,66 @@ function WebDashPanel() {
       >
         {busy ? "…" : running ? "Stop the dash" : "Start the dash"}
       </button>
+    </div>
+  );
+}
+
+/**
+ * Update status, read from main rather than mirrored in settings — the
+ * downloader either has a build waiting or it doesn't, and a stored flag can
+ * disagree with reality after a restart.
+ */
+function UpdatePanel() {
+  const settings = useStore((s) => s.settings);
+  const update = useStore((s) => s.updateSettings);
+  const [state, setState] = useState<UpdateState | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void window.atla?.update?.state().then(setState);
+    return window.atla?.update?.onState(setState);
+  }, []);
+
+  const line = () => {
+    if (!state) return "";
+    if (!state.supported) return state.message ?? "Updates aren't available for this build.";
+    if (state.status === "checking") return "Checking…";
+    if (state.status === "downloading") return `Downloading ${state.availableVersion ?? ""} · ${state.percent ?? 0}%`;
+    if (state.status === "ready") return `${state.availableVersion} downloaded — restart to apply.`;
+    if (state.message) return state.message;
+    return `Atla ${state.currentVersion} — up to date.`;
+  };
+
+  return (
+    <div className="space-y-3">
+      <Switch
+        checked={settings.autoUpdate}
+        onChange={(v) => update({ autoUpdate: v })}
+        label="Download updates automatically"
+        hint="Checks a few times a day and downloads in the background. Nothing installs until you choose to restart."
+      />
+      <div className="flex items-center gap-3">
+        <button
+          onClick={async () => {
+            setBusy(true);
+            setState((await window.atla?.update?.check()) ?? null);
+            setBusy(false);
+          }}
+          disabled={busy || !state?.supported}
+          className="bevel bevel-sm px-3 py-1.5 rounded-full text-[12px] font-medium disabled:opacity-50"
+        >
+          {busy ? "Checking…" : "Check now"}
+        </button>
+        <span className="text-[12px] text-secondary flex-1 min-w-0">{line()}</span>
+        {state?.status === "ready" && (
+          <button
+            onClick={() => void window.atla?.update?.install()}
+            className="bevel bevel-sm bevel-on px-3 py-1.5 rounded-full text-[12px] font-medium shrink-0"
+          >
+            Restart
+          </button>
+        )}
+      </div>
     </div>
   );
 }

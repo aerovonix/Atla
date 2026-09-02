@@ -521,6 +521,10 @@ export const useStore = create<AtlaStore>((set, get) => {
         systemInfo = null;
       }
 
+      // The updater starts enabled and learns the real preference here, since
+      // main has no view of settings.
+      void window.atla?.update?.setEnabled(settings.autoUpdate);
+
       set({
         systemInfo,
         systemCwd,
@@ -700,6 +704,7 @@ export const useStore = create<AtlaStore>((set, get) => {
     },
 
     updateSettings: (patch) => {
+      if (patch.autoUpdate !== undefined) void window.atla?.update?.setEnabled(patch.autoUpdate);
       set((s) => ({ settings: { ...s.settings, ...patch } }));
       scheduleSaveState(get);
     },

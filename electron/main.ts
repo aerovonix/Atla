@@ -13,6 +13,7 @@ import { describeError } from "../shared/errors.js";
 import { registerDesktopIpc, registerPermissionIpc } from "./desktop.js";
 import { initWebDash, registerWebDashIpc } from "./webdash.js";
 import { initNotify, registerNotifyIpc } from "./notify.js";
+import { initUpdater, registerUpdaterIpc } from "./updater.js";
 import { initApprovals, registerApprovalIpc, clearApprovals } from "./approvals.js";
 import type { AppState, ChatStreamRequest, FetchModelsResponse, ProviderConfig } from "../shared/types.js";
 
@@ -143,10 +144,15 @@ app.whenReady().then(async () => {
   registerFileIpc();
   registerDesktopIpc();
   registerPermissionIpc();
+  registerUpdaterIpc();
   registerWebDashIpc();
   registerNotifyIpc();
   initWebDash(mainWindow!);
   initNotify(mainWindow!);
+  // Starts enabled; the renderer syncs the user's real setting once the store
+  // is hydrated. Main doesn't read settings itself, and a first check is
+  // eight seconds out, so there's time for that to land first.
+  initUpdater(mainWindow!, true);
   registerApprovalIpc();
 
   ipcMain.handle("browser:stats", () => adblocker.stats);

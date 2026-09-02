@@ -12,7 +12,7 @@ import type {
   TerminalEvent
 } from "../shared/types.js";
 import type { SystemInfo } from "../shared/environment.js";
-import type { DashStatus, FileReadResult, FileSaveResult, PermissionStatus } from "../shared/types.js";
+import type { DashStatus, FileReadResult, FileSaveResult, PermissionStatus, UpdateState } from "../shared/types.js";
 
 interface BrowserRpcRequest {
   id: string;
@@ -78,6 +78,17 @@ const api = {
       return () => ipcRenderer.removeListener("dash:request", listener);
     },
     reply: (id: string, payload: unknown) => ipcRenderer.send(`dash:reply:${id}`, payload)
+  },
+  update: {
+    state: (): Promise<UpdateState> => ipcRenderer.invoke("update:state"),
+    check: (): Promise<UpdateState> => ipcRenderer.invoke("update:check"),
+    install: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("update:install"),
+    setEnabled: (on: boolean): Promise<UpdateState> => ipcRenderer.invoke("update:set-enabled", on),
+    onState: (cb: (s: UpdateState) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, s: UpdateState) => cb(s);
+      ipcRenderer.on("update:state", listener);
+      return () => ipcRenderer.removeListener("update:state", listener);
+    }
   },
   permissions: {
     status: (): Promise<PermissionStatus> => ipcRenderer.invoke("permissions:status"),

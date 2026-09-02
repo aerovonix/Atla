@@ -9,6 +9,7 @@ import { ApprovalModal } from "./components/ApprovalModal";
 import { CanvasPanel } from "./components/CanvasPanel";
 import { Onboarding } from "./components/Onboarding";
 import { attachDashBridge } from "./state/dashBridge";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { AtlaMark } from "./components/AtlaMark";
 import type { ComposerDraft } from "./components/Composer";
 import { resolveTheme } from "../shared/types";
@@ -139,6 +140,7 @@ export default function App() {
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       {/* Sits above everything: a permission prompt must never be missable. */}
       <ApprovalModal />
+      <UpdateBanner />
     </div>
   );
 }

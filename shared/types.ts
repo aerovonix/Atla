@@ -207,6 +207,8 @@ export interface AppSettings {
   desktopConfirmEvery: boolean;
   /** Notify when a reply finishes while the window isn't focused. */
   notifyOnFinish: boolean;
+  /** Check for and download new versions in the background. */
+  autoUpdate: boolean;
   /** Have a second model review each answer and let the first revise it. */
   criticEnabled: boolean;
   /** Reviewer provider. Empty means the answering model reviews its own work. */
@@ -263,6 +265,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // On, but it only ever fires when the window is in the background, so it
   // can't interrupt someone who is already watching the answer arrive.
   notifyOnFinish: true,
+  autoUpdate: true,
   // Off by default and empty by default. This is the one capability that can
   // reach outside Atla entirely, so it starts switched off, and switching it
   // on still grants nothing until the user names an app.
@@ -469,4 +472,17 @@ export interface PermissionStatus {
   platform: string;
   screen: boolean;
   accessibility: boolean;
+}
+
+/** Where the updater has got to. Installing is always the user's call. */
+export interface UpdateState {
+  status: "idle" | "checking" | "downloading" | "ready";
+  currentVersion: string;
+  availableVersion?: string;
+  /** Download progress, 0-100. */
+  percent?: number;
+  /** False on a dev run, or a macOS build that can't update itself. */
+  supported: boolean;
+  /** Why it can't update, or what went wrong. */
+  message?: string;
 }

@@ -19,20 +19,23 @@
     "package": "npm run build && electron-builder",
     "start": "npm run build && electron .",
     "package:mac": "npm run build && electron-builder --mac",
-    "package:linux": "npm run build && electron-builder --linux"
+    "package:linux": "npm run build && electron-builder --linux",
+    "release": "npm run build && electron-builder --publish always",
+    "release:mac": "npm run build && electron-builder --mac --publish always"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
+    "nanoid": "^5.0.7",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.1",
     "remark-gfm": "^4.0.0",
-    "zustand": "^4.5.5",
-    "nanoid": "^5.0.7"
+    "zustand": "^4.5.5"
   },
   "devDependencies": {
+    "@types/node": "^22.5.4",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
-    "@types/node": "^22.5.4",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.20",
     "concurrently": "^9.0.1",
@@ -102,6 +105,13 @@
       {
         "from": "build/icon.png",
         "to": "icon.png"
+      }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "aerovonix",
+        "repo": "Atla"
       }
     ]
   },

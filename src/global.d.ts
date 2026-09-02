@@ -12,7 +12,8 @@ import type {
   FileReadResult,
   FileSaveResult,
   DashStatus,
-  PermissionStatus
+  PermissionStatus,
+  UpdateState
 } from "../shared/types";
 import type { DashRequest } from "../shared/dashProtocol";
 import type { SystemInfo } from "../shared/environment";
@@ -64,6 +65,13 @@ export interface AtlaBridge {
     stop: () => Promise<DashStatus>;
     onRequest: (cb: (payload: { id: string; request: DashRequest }) => void) => () => void;
     reply: (id: string, payload: unknown) => void;
+  };
+  update: {
+    state: () => Promise<UpdateState>;
+    check: () => Promise<UpdateState>;
+    install: () => Promise<{ ok: boolean }>;
+    setEnabled: (on: boolean) => Promise<UpdateState>;
+    onState: (cb: (s: UpdateState) => void) => () => void;
   };
   permissions: {
     status: () => Promise<PermissionStatus>;
