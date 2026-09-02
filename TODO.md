@@ -48,3 +48,26 @@ Everything here is written and runs on Windows, but has never executed on macOS.
 
 - **CC BY-NC-SA for code.** Creative Commons recommends against it for software — no patent grant, and "NonCommercial" is ambiguous in practice. PolyForm Noncommercial is the code-native equivalent if that ambiguity ever becomes a real problem rather than a theoretical one.
 - **A native automation module** for desktop control. Per-platform rebuilds pinned to each Electron version aren't worth it; the platform's own scripting works.
+
+## Electron 44 (on `testing`, needs soak)
+
+Upgraded from Electron 32.3.3 to 44.1.1 — Chromium 128 to 152, about two
+years of V8 and Blink work. The whole point is browser performance:
+Speedometer 3.1 in the browser viewport measured **10.6** against Chrome's
+15.5 and Brave's 15.2, and that gap is the engine's age, not our blocking.
+Neither hardware acceleration nor the code cache were at fault; both were
+checked and were already correct.
+
+Typecheck, both test suites and the build pass with no source changes, and
+the suites run under the real Electron binary. That is not the same as the
+app having been used, so before this is promoted to `beta`:
+
+- [ ] Re-run Speedometer 3.1 and record the new number
+- [ ] Exercise the browser panel: tabs, navigation, tracker blocking, the
+      lean/full mode switch
+- [ ] Exercise desktop capture — `desktopCapturer` and the macOS permission
+      probes still typecheck, but their behaviour is unverified here
+- [ ] Confirm electron-builder 26 still produces a working installer, and
+      that the update feed and asset names still agree
+- [ ] `npm audit` reports 2 vulnerabilities (1 moderate, 1 high) after the
+      upgrade — triage before release
