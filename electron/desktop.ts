@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { desktopCapturer, ipcMain, screen } from "electron";
+import { desktopCapturer, ipcMain, screen, systemPreferences } from "electron";
 import type { DesktopAction, DesktopWindow } from "../shared/desktopPolicy.js";
 
 /**
@@ -93,6 +93,40 @@ export async function focusedWindowTitle(): Promise<string> {
   }
 }
 
+/**
+ * macOS gates screen capture and input behind separate permissions, and both
+ * fail in ways that don't say so: capture returns black or empty frames, and
+ * actuation is refused silently. Checking first turns "the tool failed" into
+ * something the user can act on — and, just as importantly, stops the model
+ * inventing an explanation for a failure it was told nothing about.
+ *
+ * Windows and Linux have no equivalent, so this is a no-op there.
+ */
+function assertMacPermission(kind: "screen" | "accessibility"): void {
+  if (process.platform !== "darwin") return;
+
+  if (kind === "screen") {
+    const status = systemPreferences.getMediaAccessStatus("screen");
+    if (status === "granted") return;
+    throw new Error(
+      "macOS hasn't granted Atla permission to record the screen, so there's nothing to capture. " +
+        "Open System Settings > Privacy & Security > Screen & System Audio Recording, switch Atla on, " +
+        "then quit and reopen Atla — the permission doesn't apply to an app that's already running. " +
+        "Tell the user this; don't try another way to see the screen."
+    );
+  }
+
+  // Accessibility governs synthetic input. Asked without prompting, because a
+  // prompt in the middle of a tool call is a dialog the user didn't ask for.
+  if (!systemPreferences.isTrustedAccessibilityClient(false)) {
+    throw new Error(
+      "macOS hasn't granted Atla Accessibility permission, so clicks and keystrokes are ignored. " +
+        "Open System Settings > Privacy & Security > Accessibility, switch Atla on, then quit and " +
+        "reopen Atla. Tell the user this; the action did not happen."
+    );
+  }
+}
+
 export async function listWindows(): Promise<DesktopWindow[]> {
   const sources = await desktopCapturer.getSources({ types: ["window", "screen"], fetchWindowIcons: false });
   return sources
@@ -121,6 +155,7 @@ const MAX_CAPTURE_EDGE = 1600;
 export async function capture(
   target?: string
 ): Promise<{ dataUrl: string; title: string; width: number; height: number; scale: number }> {
+  assertMacPermission("screen");
   const display = screen.getPrimaryDisplay();
   const { width: sw, height: sh } = display.size;
 
@@ -259,6 +294,7 @@ export async function perform(action: DesktopAction): Promise<void> {
   // Re-checked here rather than only at the call site: a batch approved a
   // moment ago must still stop the instant the kill switch is hit.
   if (killed) throw new Error("Desktop control was stopped. Re-enable it in Settings to continue.");
+  assertMacPermission("accessibility");
   if (process.platform === "win32") return actWindows(action);
   if (process.platform === "darwin") return actMac(action);
   return actLinux(action);
