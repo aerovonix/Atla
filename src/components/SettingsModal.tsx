@@ -793,6 +793,20 @@ function UpdatePanel() {
         label="Download updates automatically"
         hint="Checks a few times a day and downloads in the background. Nothing installs until you choose to restart."
       />
+      <Field
+        label="Release channel"
+        hint="Beta and alpha are prereleases — earlier, and likelier to be broken. Each tier still receives stable releases when they are the newest thing available."
+      >
+        <SegmentedControl
+          value={settings.updateChannel}
+          onChange={(v) => update({ updateChannel: v })}
+          options={[
+            { value: "stable", label: "Stable" },
+            { value: "beta", label: "Beta" },
+            { value: "alpha", label: "Alpha" }
+          ]}
+        />
+      </Field>
       <div className="flex items-center gap-3">
         <button
           onClick={async () => {

@@ -1,5 +1,8 @@
 // Shared between the Electron main process and the renderer (React) code.
 
+import type { UpdateChannel } from "./channels.js";
+export type { UpdateChannel };
+
 import type { DesktopPolicy, DesktopScope } from "./desktopPolicy.js";
 
 export type ProviderKind =
@@ -209,6 +212,17 @@ export interface AppSettings {
   notifyOnFinish: boolean;
   /** Check for and download new versions in the background. */
   autoUpdate: boolean;
+  /**
+   * Which releases count as an update.
+   *
+   * - `stable`: finished releases only (0.7.0)
+   * - `beta`: also release candidates and betas (0.7.0-rc.1, 0.7.0-beta.2)
+   * - `alpha`: also alphas cut straight off the workbench (0.7.0-alpha.4)
+   *
+   * Each tier includes the ones below it, so an alpha user still receives a
+   * stable release when it is the newest thing available.
+   */
+  updateChannel: UpdateChannel;
   /** Block trackers, ad exchanges and session replay in the browser. */
   blockTrackers: boolean;
   /** Strip utm_*, gclid, fbclid and friends from every request. */
@@ -277,6 +291,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // can't interrupt someone who is already watching the answer arrive.
   notifyOnFinish: true,
   autoUpdate: true,
+  updateChannel: "stable",
   blockTrackers: true,
   stripTrackingParams: true,
   leanWhenHidden: true,

@@ -60,3 +60,14 @@ Pull requests are expected to leave the suite passing.
 Windows is the primary development platform. macOS builds and runs but parts of it are still unverified — see `TODO.md`. Linux has build configuration but has never been run.
 
 If you're testing on a platform that isn't yours, say so in the pull request. "Builds on Linux" and "works on Linux" are different claims and both are useful, but they shouldn't be confused.
+
+## Branches and versions
+
+Open pull requests against **`testing`**, never `main`. Work is promoted
+forward by merging `testing` into `beta`, and `beta` into `main` — a change on
+`main` that skipped the other two has never run anywhere but the machine it was
+written on.
+
+Versions are semver, with `alpha`, `beta` and `rc` prerelease tags matching
+those branches. The full scheme, and the two updater mechanics that are easy to
+get wrong, are in [RELEASING.md](RELEASING.md).

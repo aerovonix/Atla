@@ -72,6 +72,7 @@ export interface AtlaBridge {
     check: () => Promise<UpdateState>;
     install: () => Promise<{ ok: boolean }>;
     setEnabled: (on: boolean) => Promise<UpdateState>;
+    setChannel: (channel: string) => Promise<UpdateState>;
     onState: (cb: (s: UpdateState) => void) => () => void;
   };
   permissions: {

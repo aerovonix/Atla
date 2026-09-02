@@ -1,6 +1,7 @@
 import { app, ipcMain, type BrowserWindow } from "electron";
 import electronUpdater from "electron-updater";
 import type { UpdateState } from "../shared/types.js";
+import { acceptsVersion, type UpdateChannel } from "../shared/channels.js";
 
 /**
  * Update checking and downloading, against the project's GitHub releases.
@@ -57,6 +58,20 @@ function supportCheck(): { supported: boolean; reason?: string } {
     return { supported: false, reason: "Move Atla to your Applications folder to receive updates." };
   }
   return { supported: true };
+}
+
+/**
+ * Points the updater at a release tier.
+ *
+ * Note what is *not* set here: `autoUpdater.channel`. Pinning it would make a
+ * beta user request `beta.yml` from a stable release, which the GitHub
+ * provider never generates — see shared/channels.ts for why that 404s
+ * forever. Letting the provider resolve each tag's own channel file and
+ * filtering by tier afterwards is the combination that actually works.
+ */
+export function applyChannel(channel: UpdateChannel) {
+  autoUpdater.allowPrerelease = channel !== "stable";
+  autoUpdater.isUpdateSupported = (info) => acceptsVersion(channel, info.version);
 }
 
 export function initUpdater(win: BrowserWindow, autoUpdateEnabled: boolean) {
@@ -171,6 +186,10 @@ export function registerUpdaterIpc() {
   });
   ipcMain.handle("update:set-enabled", (_e, next: boolean) => {
     setEnabled(Boolean(next));
+    return state;
+  });
+  ipcMain.handle("update:set-channel", (_e, channel: UpdateChannel) => {
+    applyChannel(channel);
     return state;
   });
 }

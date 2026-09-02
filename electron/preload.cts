@@ -85,6 +85,7 @@ const api = {
     check: (): Promise<UpdateState> => ipcRenderer.invoke("update:check"),
     install: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("update:install"),
     setEnabled: (on: boolean): Promise<UpdateState> => ipcRenderer.invoke("update:set-enabled", on),
+    setChannel: (channel: string): Promise<UpdateState> => ipcRenderer.invoke("update:set-channel", channel),
     onState: (cb: (s: UpdateState) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, s: UpdateState) => cb(s);
       ipcRenderer.on("update:state", listener);

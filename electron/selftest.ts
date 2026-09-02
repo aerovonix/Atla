@@ -27,6 +27,7 @@ import {
 } from "../shared/blocking.js";
 import { TRACKER_ALLOW, TRACKER_DOMAINS, TRACKER_PATTERNS } from "../shared/trackers.js";
 import { splitStreaming } from "../shared/streamSplit.js";
+import { acceptsVersion, prereleaseId, describeVersion } from "../shared/channels.js";
 import { unifiedDiff, diffStat } from "../shared/diff.js";
 import { buildEnvironmentPrompt, formatNow, osLabel, utcOffset } from "../shared/environment.js";
 import { systemInfo } from "./terminal.js";
@@ -1259,6 +1260,30 @@ export async function runSelfTest(): Promise<void> {
     check("the port is closed after stopping", !reachable);
 
     check("lanAddresses returns strings", lanAddresses().every((a) => typeof a === "string"));
+
+    console.log("\n[selftest] release channels");
+    check("a final release reaches every channel",
+      acceptsVersion("stable", "0.7.0") && acceptsVersion("beta", "0.7.0") && acceptsVersion("alpha", "0.7.0"));
+    // The point of the stable channel: prereleases never arrive unasked.
+    check("stable refuses every prerelease",
+      !acceptsVersion("stable", "0.7.0-rc.1") &&
+      !acceptsVersion("stable", "0.7.0-beta.2") &&
+      !acceptsVersion("stable", "0.7.0-alpha.9"));
+    // rc is closer to shipping than beta, so beta subscribers receive it.
+    check("beta takes rc and beta, not alpha",
+      acceptsVersion("beta", "0.7.0-rc.1") &&
+      acceptsVersion("beta", "0.7.0-beta.2") &&
+      !acceptsVersion("beta", "0.7.0-alpha.9"));
+    check("alpha takes everything",
+      acceptsVersion("alpha", "0.7.0-alpha.1") && acceptsVersion("alpha", "0.7.0-rc.1"));
+    // An undefined label is treated as least-mature rather than waved through.
+    check("an unknown prerelease label reaches alpha only",
+      acceptsVersion("alpha", "0.7.0-wip.1") &&
+      !acceptsVersion("beta", "0.7.0-wip.1") &&
+      !acceptsVersion("stable", "0.7.0-wip.1"));
+    check("prerelease id parses", prereleaseId("0.7.0-beta.2") === "beta" && prereleaseId("0.7.0") === null);
+    check("build metadata is not a prerelease", prereleaseId("0.7.0+build.5") === null, prereleaseId("0.7.0+build.5") ?? "null");
+    check("versions describe themselves", describeVersion("0.7.0-rc.1") === "rc" && describeVersion("0.7.0") === "stable");
 
     console.log("\n[selftest] streaming split");
     const pad = "Filler paragraph with some words in it.\n\n".repeat(20);

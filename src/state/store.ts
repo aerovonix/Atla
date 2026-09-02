@@ -573,6 +573,7 @@ export const useStore = create<AtlaStore>((set, get) => {
       // The updater starts enabled and learns the real preference here, since
       // main has no view of settings.
       void window.atla?.update?.setEnabled(settings.autoUpdate);
+      void window.atla?.update?.setChannel(settings.updateChannel);
 
       set({
         systemInfo,
@@ -769,6 +770,7 @@ export const useStore = create<AtlaStore>((set, get) => {
 
     updateSettings: (patch) => {
       if (patch.autoUpdate !== undefined) void window.atla?.update?.setEnabled(patch.autoUpdate);
+      if (patch.updateChannel !== undefined) void window.atla?.update?.setChannel(patch.updateChannel);
       set((s) => ({ settings: { ...s.settings, ...patch } }));
       scheduleSaveState(get);
     },
