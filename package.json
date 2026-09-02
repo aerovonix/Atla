@@ -1,7 +1,7 @@
 {
   "name": "atla",
   "productName": "Atla",
-  "version": "0.6.1",
+  "version": "0.7.0-alpha.0",
   "description": "Bring-your-own-model AI chat with a built-in browser, terminal, and file access",
   "author": {
     "name": "Aerovonix",
