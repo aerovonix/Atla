@@ -209,6 +209,17 @@ export interface AppSettings {
   notifyOnFinish: boolean;
   /** Check for and download new versions in the background. */
   autoUpdate: boolean;
+  /** Block trackers, ad exchanges and session replay in the browser. */
+  blockTrackers: boolean;
+  /** Strip utm_*, gclid, fbclid and friends from every request. */
+  stripTrackingParams: boolean;
+  /**
+   * Skip images, video and fonts while the browser panel is closed. Nobody is
+   * looking at the page then, so rendering it is work for no viewer.
+   */
+  leanWhenHidden: boolean;
+  /** GPU compositing. Off is the escape hatch for a broken driver. */
+  hardwareAcceleration: boolean;
   /** Have a second model review each answer and let the first revise it. */
   criticEnabled: boolean;
   /** Reviewer provider. Empty means the answering model reviews its own work. */
@@ -266,6 +277,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // can't interrupt someone who is already watching the answer arrive.
   notifyOnFinish: true,
   autoUpdate: true,
+  blockTrackers: true,
+  stripTrackingParams: true,
+  leanWhenHidden: true,
+  // On unless a driver forces otherwise; Chromium already picks sensibly.
+  hardwareAcceleration: true,
   // Off by default and empty by default. This is the one capability that can
   // reach outside Atla entirely, so it starts switched off, and switching it
   // on still grants nothing until the user names an app.

@@ -1,4 +1,12 @@
 import { session, type Session } from "electron";
+import {
+  buildIndex,
+  decideRequest,
+  modeFor,
+  stripTracking,
+  type ResourceKind
+} from "../shared/blocking.js";
+import { TRACKER_ALLOW, TRACKER_DOMAINS, TRACKER_PATTERNS } from "../shared/trackers.js";
 
 /**
  * A compact, self-contained blocklist. This is deliberately domain-oriented
@@ -6,6 +14,13 @@ import { session, type Session } from "electron";
  * tracker traffic with no network fetch and no multi-megabyte rule file.
  * Users can extend it via Settings → Browser → custom blocklist.
  */
+/**
+ * Built once at module load. The old code walked ~170 entries per request and
+ * a page issues hundreds of them; this is 3-4 Set lookups whatever the list
+ * size, which is what lets the list be thorough instead of small.
+ */
+const TRACKER_INDEX = buildIndex(TRACKER_DOMAINS, TRACKER_PATTERNS, TRACKER_ALLOW);
+
 const BLOCKED_DOMAINS = [
   // Google ads / analytics
   "doubleclick.net",
@@ -261,6 +276,39 @@ export class Adblocker {
     return false;
   }
 
+  /**
+   * Whether anyone is actually looking at the browser panel.
+   *
+   * This is the whole basis of the fast path: with the panel closed, the model
+   * is driving and no human sees the page, so images, fonts and video are
+   * downloaded and decoded purely to render into a view nobody has open. With
+   * it open the page loads properly — the fast path never degrades what a
+   * person is looking at.
+   */
+  private panelVisible = false;
+
+  setPanelVisible(visible: boolean) {
+    this.panelVisible = visible;
+  }
+
+  private stripParams = true;
+  private leanWhenHidden = true;
+
+  setStripParams(on: boolean) {
+    this.stripParams = on;
+  }
+
+  setLeanWhenHidden(on: boolean) {
+    this.leanWhenHidden = on;
+  }
+
+  /** Bytes never fetched because the panel was hidden. */
+  private weightSaved = 0;
+
+  get savedRequests(): number {
+    return this.weightSaved;
+  }
+
   /** Attach the request filter to the browser panel's isolated session. */
   attach(partition: string): Session {
     const sess = session.fromPartition(partition);
@@ -268,20 +316,62 @@ export class Adblocker {
     this.attached = true;
 
     sess.webRequest.onBeforeRequest({ urls: ["http://*/*", "https://*/*"] }, (details, callback) => {
-      // Never block the top-level page the user asked for — only subresources.
-      if (details.resourceType === "mainFrame") {
-        callback({ cancel: false });
+      const kind = details.resourceType as ResourceKind;
+      const mode = modeFor({ panelVisible: this.panelVisible || !this.leanWhenHidden });
+
+      const verdict = decideRequest(TRACKER_INDEX, details.url, kind, {
+        blockTrackers: this.enabled,
+        mode
+      });
+
+      if (verdict.block) {
+        if (verdict.reason === "weight") this.weightSaved++;
+        else this.blockedCount++;
+        callback({ cancel: true });
         return;
       }
-      if (this.shouldBlock(details.url)) {
+
+      // Custom user rules stay on the old path: they are the user's own
+      // additions and shouldn't be silently reinterpreted by the new index.
+      if (this.enabled && details.resourceType !== "mainFrame" && this.matchesCustom(details.url)) {
         this.blockedCount++;
         callback({ cancel: true });
         return;
       }
+
+      // Tracking parameters are stripped rather than blocked: the request
+      // still goes through, just without the label identifying the reader.
+      // Only redirect when something actually changed — rewriting a URL that
+      // needed no rewriting costs a redirect round trip per request.
+      const clean = this.stripParams ? stripTracking(details.url) : details.url;
+      if (clean !== details.url) {
+        this.blockedCount++;
+        callback({ cancel: false, redirectURL: clean });
+        return;
+      }
+
       callback({ cancel: false });
     });
 
     return sess;
+  }
+
+  /** The user's own rules, kept separate from the curated index. */
+  private matchesCustom(rawUrl: string): boolean {
+    if (this.customDomains.length === 0 && this.customPatterns.length === 0) return false;
+    let host: string;
+    let lower: string;
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+      host = parsed.hostname.toLowerCase();
+      lower = rawUrl.toLowerCase();
+    } catch {
+      return false;
+    }
+    for (const d of this.customDomains) if (hostMatches(host, d)) return true;
+    for (const p of this.customPatterns) if (lower.includes(p)) return true;
+    return false;
   }
 }
 

@@ -1,5 +1,8 @@
 import { useState } from "react";
+import { memo, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
+import { splitStreaming } from "../../shared/streamSplit";
 import remarkGfm from "remark-gfm";
 import type { ChatAttachment, ChatMessage } from "../../shared/types";
 import { CheckIcon, CopyIcon, DownloadIcon, FileIcon } from "./icons";
@@ -89,12 +92,14 @@ function AttachmentList({ attachments }: { attachments: ChatAttachment[] }) {
   );
 }
 
-export function MessageContent({ content, streaming }: { content: string; streaming?: boolean }) {
-  return (
-    <div className={`markdown text-[15px] leading-6 break-words${streaming ? " streaming-caret" : ""}`}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
+/**
+ * Element renderers, hoisted to module scope.
+ *
+ * Defined inline, this object was rebuilt on every render — a new identity
+ * each time, so nothing downstream could ever bail out of re-rendering. It is
+ * static data; it had no business being recreated per frame.
+ */
+const MARKDOWN_COMPONENTS: Components = {
           code(props) {
             const { className, children, ...rest } = props as { className?: string; children?: React.ReactNode };
             const match = /language-(\w+)/.exec(className || "");
@@ -111,13 +116,54 @@ export function MessageContent({ content, streaming }: { content: string; stream
           a(props) {
             return <a {...props} target="_blank" rel="noopener noreferrer" />;
           }
-        }}
-      >
-        {content}
-      </ReactMarkdown>
-    </div>
+        };
+
+/**
+ * Rendered markdown.
+ *
+ * Memoised, and that matters more than it looks. Streaming appends a chunk to
+ * one message, but the store update re-renders the whole transcript, so every
+ * *finished* message re-parsed its markdown on every token of the new one. A
+ * long answer costs ~18 ms to parse and the frame budget is 16.7 ms, so a
+ * fifty-message conversation was dropping frames continuously while streaming
+ * something it had already rendered.
+ *
+ * With this, only the message actually changing is re-parsed.
+ */
+/**
+ * A streaming reply, split so only the part still being written is re-parsed.
+ *
+ * Two markdown documents rather than one: the stable prefix is memoised and
+ * parses only when a new block closes, and the tail is short enough that its
+ * cost does not grow with the message. Splitting is only ever done at a
+ * completed block boundary, so the two halves mean the same thing joined as
+ * they would whole.
+ */
+export function StreamingContent({ content }: { content: string }) {
+  const { stable, tail } = useMemo(() => splitStreaming(content), [content]);
+  if (!stable) return <MessageContent content={content} streaming />;
+  return (
+    <>
+      <MessageContent content={stable} />
+      <MessageContent content={tail} streaming />
+    </>
   );
 }
+
+export const MessageContent = memo(
+  function MessageContent({ content, streaming }: { content: string; streaming?: boolean }) {
+    return (
+      <div className={`markdown text-[15px] leading-6 break-words${streaming ? " streaming-caret" : ""}`}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+          {content}
+        </ReactMarkdown>
+      </div>
+    );
+  },
+  // Only the text and the caret affect output, so nothing else should cost a
+  // re-parse.
+  (a, b) => a.content === b.content && a.streaming === b.streaming
+);
 
 export function UserMessage({ message }: { message: ChatMessage }) {
   return (

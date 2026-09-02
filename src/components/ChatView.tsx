@@ -4,7 +4,7 @@ import { useBrowserStore } from "../state/browserStore";
 import { useTerminalStore } from "../state/terminalStore";
 import { useCanvasStore } from "../state/canvasStore";
 import { Composer, type ComposerDraft } from "./Composer";
-import { MessageContent, AttachmentList } from "./MessageBubble";
+import { MessageContent, StreamingContent, AttachmentList } from "./MessageBubble";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -611,7 +611,11 @@ function AssistantBody({ message, streaming }: { message: ChatMessage; streaming
         seg.kind === "tools" ? (
           <ToolRunCard key={`tools-${seg.key}`} group={seg.group} events={seg.events} />
         ) : (
-          <MessageContent key={`text-${i}`} content={seg.text} streaming={streaming && i === lastText} />
+          streaming && i === lastText ? (
+            <StreamingContent key={`text-${i}`} content={seg.text} />
+          ) : (
+            <MessageContent key={`text-${i}`} content={seg.text} />
+          )
         )
       )}
       {/* Nothing to show yet, or the last thing was a tool call — either way

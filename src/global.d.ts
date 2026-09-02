@@ -45,6 +45,7 @@ export interface AtlaBridge {
     onRpcRequest: (handler: (req: BrowserRpcRequest) => void) => () => void;
     respond: (payload: { id: string; ok: boolean; result?: unknown; error?: string }) => void;
     signalReady: () => void;
+    setVisible: (visible: boolean) => void;
   };
   terminal: {
     cwd: () => Promise<string>;

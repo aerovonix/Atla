@@ -56,7 +56,8 @@ const api = {
     respond: (payload: { id: string; ok: boolean; result?: unknown; error?: string }) =>
       ipcRenderer.send("browser:rpc-response", payload),
     /** Tell main the RPC handler is live; commands sent before this are lost. */
-    signalReady: () => ipcRenderer.send("browser:renderer-ready")
+    signalReady: () => ipcRenderer.send("browser:renderer-ready"),
+    setVisible: (visible: boolean) => ipcRenderer.send("browser:visible", visible)
   },
   files: {
     read: (path: string): Promise<FileReadResult> => ipcRenderer.invoke("files:read", path),

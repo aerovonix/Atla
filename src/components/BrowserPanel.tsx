@@ -123,6 +123,14 @@ export function BrowserPanel({ onSendPageToChat }: { onSendPageToChat: (info: { 
     void window.atla.browser.partition().then(setPartition);
   }, []);
 
+  // Tells main whether a person can actually see the page. With the panel
+  // closed the model is driving and nothing is rendered for anyone, so images,
+  // fonts and video are skipped entirely — the single biggest saving there is,
+  // and it costs nothing visually because there is no viewer.
+  useEffect(() => {
+    window.atla.browser.setVisible?.(open);
+  }, [open]);
+
   /** Wait for the current navigation to settle before reading the DOM. */
   const waitForLoad = useCallback((timeoutMs = 30000) => {
     const wv = webviewRef.current;
