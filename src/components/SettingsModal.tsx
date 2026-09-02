@@ -380,6 +380,39 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
 
               <div className="space-y-3">
                 <UpdatePanel />
+
+                <div className="h-px my-4 bg-border" />
+
+                <div>
+                  <div className="text-sm font-medium">Performance &amp; privacy</div>
+                  <p className="text-[12px] text-secondary mt-1 mb-3 leading-relaxed">
+                    Defaults are on. Turn one off only if a site misbehaves.
+                  </p>
+                </div>
+                <Switch
+                  checked={settings.blockTrackers}
+                  onChange={(v) => set("blockTrackers", v)}
+                  label="Block trackers and ad exchanges"
+                  hint="Analytics, ad auctions and session replay — the scripts that record what you type and where you point. Content CDNs are never blocked, so pages still look right."
+                />
+                <Switch
+                  checked={settings.stripTrackingParams}
+                  onChange={(v) => set("stripTrackingParams", v)}
+                  label="Strip tracking parameters from links"
+                  hint="Removes utm_source, gclid, fbclid and similar. The site still gets the request, just without the tag identifying you. Costs nothing visually."
+                />
+                <Switch
+                  checked={settings.leanWhenHidden}
+                  onChange={(v) => set("leanWhenHidden", v)}
+                  label="Skip images while the browser is closed"
+                  hint="When the panel is hidden the model is browsing and nobody is looking, so images, video and fonts are never downloaded. Open the panel and pages load in full."
+                />
+                <Switch
+                  checked={settings.hardwareAcceleration}
+                  onChange={(v) => set("hardwareAcceleration", v)}
+                  label="Hardware acceleration"
+                  hint="Uses the GPU to draw the interface. Leave it on unless your driver is broken — takes effect after a restart."
+                />
                 <Switch
                   checked={settings.notifyOnFinish}
                   onChange={(v) => set("notifyOnFinish", v)}

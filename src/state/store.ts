@@ -96,6 +96,55 @@ function childCount(conversations: Conversation[], id: string): number {
   return childrenOf(conversations, id).length;
 }
 
+/**
+ * Streaming deltas, held briefly before being applied.
+ *
+ * A provider emits a chunk per token, and each one used to be its own store
+ * update — so the transcript re-rendered, and the growing message re-parsed
+ * its markdown, tens of times a second. Parsing a long answer costs more than
+ * a frame budget on its own, so that alone guaranteed dropped frames.
+ *
+ * Coalescing on an animation frame means at most one update per frame no
+ * matter how fast tokens arrive. Text still appears continuously — the eye
+ * cannot resolve 60 Hz from 200 Hz — while the parsing work drops to whatever
+ * the display can actually show.
+ */
+const pendingDeltas = new Map<string, string>();
+let flushHandle: number | null = null;
+
+/**
+ * Applies every buffered delta in one store write.
+ *
+ * Called on the frame tick, and eagerly before anything that reads the message
+ * text — a tool offset, a revision, the final done — since those would
+ * otherwise measure against text that hasn't landed yet.
+ */
+function flushDeltas(set: (fn: (s: AtlaStore) => Partial<AtlaStore>) => void) {
+  if (pendingDeltas.size === 0) return;
+  const batch = new Map(pendingDeltas);
+  pendingDeltas.clear();
+  set((st) => {
+    const targets = new Map<string, string>();
+    for (const [requestId, delta] of batch) {
+      const target = st.streaming[requestId];
+      if (target) targets.set(target.assistantMessageId, (targets.get(target.assistantMessageId) ?? "") + delta);
+    }
+    if (targets.size === 0) return {};
+    return {
+      conversations: st.conversations.map((c) => {
+        if (!c.messages.some((m) => targets.has(m.id))) return c;
+        return {
+          ...c,
+          messages: c.messages.map((m) => {
+            const delta = targets.get(m.id);
+            return delta === undefined ? m : { ...m, content: m.content + delta };
+          })
+        };
+      })
+    };
+  });
+}
+
 let saveStateTimer: ReturnType<typeof setTimeout> | null = null;
 function scheduleSaveState(get: () => AtlaStore) {
   if (saveStateTimer) clearTimeout(saveStateTimer);
@@ -551,17 +600,29 @@ export const useStore = create<AtlaStore>((set, get) => {
             }));
 
           if (evt.type === "chunk") {
-            patchMessage((m) => ({ ...m, content: m.content + evt.delta }));
+            // Buffered, not applied. The flush below owns the store write.
+            pendingDeltas.set(evt.requestId, (pendingDeltas.get(evt.requestId) ?? "") + evt.delta);
+            if (flushHandle === null) {
+              flushHandle = requestAnimationFrame(() => {
+                flushHandle = null;
+                flushDeltas(set);
+              });
+            }
           } else if (evt.type === "tool") {
             // Stamp where in the text this happened so the card can render in
             // place instead of every card stacking above the message.
+            flushDeltas(set);
             patchMessage((m) => ({
               ...m,
               toolEvents: [...(m.toolEvents ?? []), { ...evt.event, at: m.content.length }]
             }));
           } else if (evt.type === "reviewing") {
+            flushDeltas(set);
             patchMessage((m) => ({ ...m, reviewing: true }));
           } else if (evt.type === "revising") {
+            // The body is about to be cleared for the revision; any delta
+            // still buffered belongs to the text being replaced.
+            flushDeltas(set);
             // The revision streams into a cleared body. The first answer moves
             // to `original` rather than being dropped, so a revision that turns
             // out worse is still recoverable by the user.
@@ -573,6 +634,9 @@ export const useStore = create<AtlaStore>((set, get) => {
               content: ""
             }));
           } else if (evt.type === "done" || evt.type === "error") {
+            // The last tokens usually arrive in the same frame as `done`, so
+            // without this the tail of every reply would be silently dropped.
+            flushDeltas(set);
             set((s) => {
               const { [evt.requestId]: _drop, ...rest } = s.streaming;
               return {

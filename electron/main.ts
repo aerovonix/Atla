@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadAll, saveState, saveProviders, migrateFromNova } from "./store.js";
+import { loadAll, saveState, saveProviders, saveStartupFlags, migrateFromNova } from "./store.js";
 import { streamChat, generateTitle } from "./providers.js";
 import { fetchModels } from "./modelList.js";
 import { adblocker } from "./adblock.js";
@@ -21,6 +23,29 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = process.env.NOVA_DEV === "1" || process.env.ATLA_DEV === "1";
 
 export const BROWSER_PARTITION = "persist:atla-browser";
+
+/**
+ * GPU compositing is on by default and Chromium already picks sensibly, so
+ * this exists only as an escape hatch: a broken or blacklisted driver can make
+ * the whole window render slower than software would. It has to be read before
+ * the app is ready — Chromium fixes its GPU decision at startup and ignores
+ * the switch afterwards.
+ */
+function applyGpuPreference() {
+  try {
+    // Deliberately NOT the main state file. That holds the whole conversation
+    // history — 9 MB and growing — and reading it here cost 101 ms of startup
+    // before the window could even be created, to fetch one boolean. This
+    // sidecar carries only what must be known before the app is ready.
+    const raw = readFileSync(join(app.getPath("userData"), "atla-startup.json"), "utf8");
+    if (JSON.parse(raw)?.hardwareAcceleration === false) {
+      app.disableHardwareAcceleration();
+    }
+  } catch {
+    // Absent on first run, or unreadable. Acceleration on is the right default.
+  }
+}
+applyGpuPreference();
 
 const activeStreams = new Map<string, AbortController>();
 let providersCache: ProviderConfig[] = [];
@@ -102,9 +127,14 @@ app.whenReady().then(async () => {
   ipcMain.handle("store:load", async () => loadAll());
 
   ipcMain.handle("store:save-state", async (_e, state: AppState) => {
-    adblocker.setEnabled(state.settings.adblockEnabled);
+    adblocker.setEnabled(state.settings.blockTrackers ?? state.settings.adblockEnabled);
+    adblocker.setStripParams(state.settings.stripTrackingParams !== false);
+    adblocker.setLeanWhenHidden(state.settings.leanWhenHidden !== false);
     adblocker.setCustomRules(state.settings.customBlocklist);
     await saveState(state);
+    // Written alongside, so the next launch can read the GPU decision without
+    // touching the (large) state file.
+    await saveStartupFlags(state.settings);
   });
 
   ipcMain.handle("store:save-providers", async (_e, providers: ProviderConfig[]) => {
@@ -156,6 +186,9 @@ app.whenReady().then(async () => {
   registerApprovalIpc();
 
   ipcMain.handle("browser:stats", () => adblocker.stats);
+  // Drives the fast path: hidden panel means nobody sees the page, so
+  // images, fonts and video are never fetched.
+  ipcMain.on("browser:visible", (_e, visible: boolean) => adblocker.setPanelVisible(Boolean(visible)));
   ipcMain.handle("browser:partition", () => BROWSER_PARTITION);
 
   ipcMain.on("chat:start", async (event, req: ChatStreamRequest) => {

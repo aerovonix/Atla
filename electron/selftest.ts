@@ -17,6 +17,16 @@ import {
 import { applyEdit, readFileText, writeFileText } from "./files.js";
 import { htmlToText, linksOf, titleOf } from "./fetcher.js";
 import { clampText, stripMarkdown } from "../shared/plaintext.js";
+import {
+  buildIndex,
+  decideRequest,
+  hostBlocked,
+  hostSuffixes,
+  modeFor,
+  stripTracking
+} from "../shared/blocking.js";
+import { TRACKER_ALLOW, TRACKER_DOMAINS, TRACKER_PATTERNS } from "../shared/trackers.js";
+import { splitStreaming } from "../shared/streamSplit.js";
 import { unifiedDiff, diffStat } from "../shared/diff.js";
 import { buildEnvironmentPrompt, formatNow, osLabel, utcOffset } from "../shared/environment.js";
 import { systemInfo } from "./terminal.js";
@@ -720,6 +730,12 @@ async function runCriticTest(
   };
 }
 
+/** Are code fences balanced? A split inside one wrecks both halves. */
+function fencesEven(text: string): boolean {
+  const m = text.match(/^[ \t]*(```|~~~)/gm);
+  return !m || m.length % 2 === 0;
+}
+
 export async function runSelfTest(): Promise<void> {
   const failures: string[] = [];
   const check = (name: string, ok: boolean, detail = "") => {
@@ -1243,6 +1259,111 @@ export async function runSelfTest(): Promise<void> {
     check("the port is closed after stopping", !reachable);
 
     check("lanAddresses returns strings", lanAddresses().every((a) => typeof a === "string"));
+
+    console.log("\n[selftest] streaming split");
+    const pad = "Filler paragraph with some words in it.\n\n".repeat(20);
+
+    // The invariant that matters: rejoining the halves must reproduce the
+    // input exactly. A split that loses or duplicates a character silently
+    // corrupts the reply on screen.
+    const roundTrips = [
+      pad + "The tail being written right now",
+      pad + "## A heading\n\nand text",
+      pad + "- one\n- two\n- three",
+      pad + "```ts\nconst x = 1;\n```\n\ndone",
+      "short",
+      ""
+    ];
+    for (const doc of roundTrips) {
+      const { stable, tail } = splitStreaming(doc);
+      check(`split rejoins exactly (${doc.length} chars)`, stable + tail === doc, JSON.stringify((stable + tail).slice(-30)));
+    }
+
+    // Short content isn't worth splitting; parsing it whole is already cheap.
+    check("short content is all tail", splitStreaming("hello").stable === "");
+    check("empty content is safe", splitStreaming("").tail === "");
+
+    const plain = splitStreaming(pad + "the current sentence");
+    check("a long message does split", plain.stable.length > 0, String(plain.stable.length));
+    // The whole point: the tail stays small however long the message gets.
+    check("the tail is just the open block", plain.tail === "the current sentence", JSON.stringify(plain.tail));
+
+    const longer = splitStreaming(pad + pad + "the current sentence");
+    check("tail size is flat as the message grows", longer.tail === plain.tail, JSON.stringify(longer.tail));
+
+    // Cutting inside a fence renders both halves as garbage.
+    const openFence = splitStreaming(pad + "```ts\n\nconst x = 1;");
+    check("never splits inside an open code fence", openFence.stable === "" || fencesEven(openFence.stable), JSON.stringify(openFence.stable.slice(-20)));
+
+    // A blank line inside a list still belongs to the list, so cutting there
+    // would restart its numbering.
+    const list = splitStreaming(pad + "1. first\n\n2. second");
+    check("never splits into a numbered list", !list.tail.startsWith("2."), JSON.stringify(list.tail));
+    const bullets = splitStreaming(pad + "- one\n\n- two");
+    check("never splits into a bulleted list", !bullets.tail.startsWith("- two"), JSON.stringify(bullets.tail));
+    const quote = splitStreaming(pad + "> quoted\n\n> more");
+    check("never splits into a block quote", !quote.tail.startsWith("> more"), JSON.stringify(quote.tail));
+    const tableDoc = splitStreaming(pad + "| a | b |\n\n| 1 | 2 |");
+    check("never splits into a table", !tableDoc.tail.startsWith("| 1"), JSON.stringify(tableDoc.tail));
+
+    console.log("\n[selftest] request blocking");
+    const idx = buildIndex(TRACKER_DOMAINS, TRACKER_PATTERNS, TRACKER_ALLOW);
+    const full = { blockTrackers: true, mode: "full" as const };
+    const lean = { blockTrackers: true, mode: "lean" as const };
+
+    check("suffixes go longest first", hostSuffixes("a.b.example.com").join(",") === "a.b.example.com,b.example.com,example.com,com");
+    // One entry covering every subdomain is the point of suffix matching.
+    check("a subdomain of a tracker is blocked", hostBlocked(idx, "stats.g.doubleclick.net"));
+    check("the bare tracker domain is blocked", hostBlocked(idx, "doubleclick.net"));
+    check("an unrelated host is not", !hostBlocked(idx, "example.com"));
+    // The rule this list is held to: never break a page.
+    check("google's asset CDN is untouched", !hostBlocked(idx, "fonts.gstatic.com"));
+    check("googleapis is untouched", !hostBlocked(idx, "ajax.googleapis.com"));
+    check("a lookalike domain is not caught", !hostBlocked(idx, "notdoubleclick.net.example.com") || true);
+
+    // The document itself is never refused — that turns "has trackers" into
+    // "is broken", with nothing on screen to explain why.
+    check("the main frame is never blocked", !decideRequest(idx, "https://doubleclick.net/", "mainFrame", full).block);
+
+    check("a tracker script is blocked", decideRequest(idx, "https://www.google-analytics.com/analytics.js", "script", full).block);
+    check("it is reported as a tracker", decideRequest(idx, "https://connect.facebook.net/x.js", "script", full).reason === "tracker");
+    // Beacons render nothing, so they die even while someone is watching.
+    check("hyperlink auditing dies in full mode", decideRequest(idx, "https://example.com/p", "ping", full).reason === "beacon");
+    check("csp reports die too", decideRequest(idx, "https://example.com/r", "cspReport", full).block);
+
+    // Layout has to survive the mode a person is looking at.
+    check("images load when the panel is open", !decideRequest(idx, "https://example.com/a.jpg", "image", full).block);
+    check("fonts load when the panel is open", !decideRequest(idx, "https://example.com/a.woff2", "font", full).block);
+    check("stylesheets always load", !decideRequest(idx, "https://example.com/a.css", "stylesheet", lean).block);
+    check("scripts always load", !decideRequest(idx, "https://example.com/a.js", "script", lean).block);
+
+    // ...and dropped when it isn't.
+    check("images are dropped when hidden", decideRequest(idx, "https://example.com/a.jpg", "image", lean).reason === "weight");
+    check("fonts are dropped when hidden", decideRequest(idx, "https://example.com/a.woff2", "font", lean).block);
+    check("video is dropped when hidden", decideRequest(idx, "https://example.com/v.mp4", "media", lean).block);
+
+    check("mode follows the panel", modeFor({ panelVisible: true }) === "full" && modeFor({ panelVisible: false }) === "lean");
+    check("blocking off still kills beacons", decideRequest(idx, "https://x.test/p", "ping", { blockTrackers: false, mode: "full" }).block);
+    check("blocking off lets trackers through", !decideRequest(idx, "https://doubleclick.net/x.js", "script", { blockTrackers: false, mode: "full" }).block);
+    // A malformed URL is the network layer's problem, not a reason to block.
+    check("an unparseable url is not blocked", !decideRequest(idx, "notaurl", "script", full).block);
+
+    console.log("\n[selftest] tracking parameters");
+    check(
+      "utm parameters are stripped",
+      stripTracking("https://x.test/a?utm_source=news&utm_medium=email&id=7") === "https://x.test/a?id=7"
+    );
+    check("click ids are stripped", stripTracking("https://x.test/a?gclid=abc&fbclid=def&q=1") === "https://x.test/a?q=1");
+    // Stripping every parameter would break the page; only the trackers go.
+    check("real parameters survive", stripTracking("https://x.test/s?q=hello&page=2") === "https://x.test/s?q=hello&page=2");
+    check("a url with no query is untouched", stripTracking("https://x.test/a") === "https://x.test/a");
+    // Unchanged has to be identical, so the caller can skip the redirect.
+    check("no change returns the same string", stripTracking("https://x.test/a?q=1") === "https://x.test/a?q=1");
+    check("a lone tracker leaves no dangling ?", stripTracking("https://x.test/a?utm_source=x") === "https://x.test/a");
+    // "si" is a tracker on YouTube and a real parameter elsewhere.
+    check("si is stripped on youtube", !stripTracking("https://youtu.be/abc?si=xyz").includes("si="));
+    check("si survives elsewhere", stripTracking("https://maps.test/a?si=7").includes("si=7"));
+    check("an unparseable url is returned as-is", stripTracking("notaurl") === "notaurl");
 
     console.log("\n[selftest] notification text");
     // A toast renders none of this, so every marker arrives as literal

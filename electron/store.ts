@@ -143,3 +143,27 @@ export async function loadAll(): Promise<PersistedData> {
   const [state, providers] = await Promise.all([loadState(), loadProviders()]);
   return { state, providers };
 }
+
+/**
+ * Flags the main process needs *before* the app is ready, written to their own
+ * tiny file.
+ *
+ * The GPU decision is fixed by Chromium at startup and ignored afterwards, so
+ * it has to be read synchronously before anything else happens — and the main
+ * state file is far too large for that: it carries the entire conversation
+ * history, and reading it at launch measured 101 ms of delay to fetch a single
+ * boolean. This stays a few dozen bytes however big the history gets.
+ */
+export async function saveStartupFlags(settings: { hardwareAcceleration?: boolean }): Promise<void> {
+  const target = path.join(dataDir(), "atla-startup.json");
+  try {
+    await fs.writeFile(
+      target,
+      JSON.stringify({ hardwareAcceleration: settings.hardwareAcceleration !== false }),
+      "utf-8"
+    );
+  } catch {
+    // Losing this only means acceleration stays at its default next launch,
+    // which is not worth failing a save over.
+  }
+}
