@@ -7,19 +7,21 @@
  *
  * ## Why this filter exists at all
  *
- * electron-builder's channel cascade (a stable build also writing `alpha.yml`
- * and `beta.yml`) is explicitly disabled for the GitHub provider: a stable
- * release publishes `latest.yml` and nothing else. Meanwhile electron-updater
- * picks the channel file from *the tag it found*, falling back to
- * `autoUpdater.channel` for a stable tag.
+ * With the GitHub provider every release publishes `latest.yml` and nothing
+ * else — the channel derived from the version string is applied to the
+ * generic provider, not to this one. Building `0.7.0-alpha.0` produced
+ * `latest.yml` and no `alpha.yml`, which is what settled the question.
  *
- * So pinning `autoUpdater.channel = "beta"` would make a beta user ask a
- * stable release for a `beta.yml` that was never generated — a 404 the updater
- * retries forever while reporting nothing. That is precisely the failure that
- * stranded 0.6.1 at 0%, so it is worth not rebuilding on purpose.
+ * electron-updater then asks for `<prerelease-id>.yml` first and falls back
+ * to `latest.yml` when that 404s — but only while `allowPrerelease` is on.
  *
- * Instead the provider is left to resolve each tag's own channel file, and
- * tier is enforced here, through `isUpdateSupported`.
+ * So pinning `autoUpdater.channel = "beta"` would make a stable-channel user
+ * ask for a `beta.yml` that is never generated, with no fallback to rescue
+ * them: a 404 retried forever while reporting nothing, which is precisely the
+ * failure that stranded 0.6.1 at 0%.
+ *
+ * Everything therefore resolves through `latest.yml`, and tier is enforced
+ * here instead, through `isUpdateSupported`.
  */
 
 export type UpdateChannel = "stable" | "beta" | "alpha";
