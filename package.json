@@ -1,7 +1,7 @@
 {
   "name": "atla",
   "productName": "Atla",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Atla - a desktop AI chat client with a built-in adblocking browser. Bring your own model: Claude, OpenAI, Gemini, OpenRouter, Ollama, or any OpenAI-compatible endpoint.",
   "author": "Aerovonix",
   "main": "dist-electron/electron/main.js",
