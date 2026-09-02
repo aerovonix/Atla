@@ -1,0 +1,12 @@
+# Normalise to LF in the repository, whatever the checkout does locally.
+# This project has already lost time to mixed CRLF/LF breaking multi-line
+# patches; pinning it here stops that travelling to anyone who clones it.
+* text=auto eol=lf
+
+# Binary: never touch these.
+*.png binary
+*.ico binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.exe binary

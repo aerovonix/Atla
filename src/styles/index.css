@@ -1,0 +1,712 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Brand, from the logo: #f27229 (orange) and #e73e26 (red).
+   The raw orange is only ~2.9:1 on white, so light mode uses a deeper shade
+   for anything that has to be *read*, while the gradient — used behind icons
+   and large bold text only — keeps the logo's actual colors. */
+:root {
+  --bg: #ffffff;
+  --sidebar: #f7f7f8;
+  --input: #f4f4f4;
+  --text: #0d0d0d;
+  --secondary: #6e6e80;
+  --muted: #8e8ea0;
+  --border: #e5e5e5;
+  --border-light: #ececec;
+  --user-bubble: #f4f4f4;
+  --hover: #f4f4f4;
+  --code-bg: #f7f7f8;
+  --code-border: #e5e5e5;
+
+  --brand-orange: #f27229;
+  --brand-red: #e73e26;
+  --brand-gradient: linear-gradient(135deg, #f27229 0%, #e73e26 100%);
+  /* Readable on white (~4.6:1). */
+  --accent: #c2410c;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(242, 114, 41, 0.12);
+  --accent-border: rgba(231, 62, 38, 0.4);
+  --accent-glow: rgba(242, 114, 41, 0.25);
+  /* Live-activity marks: the thinking dots and the streaming caret. White in
+     dark, where it reads as neutral motion rather than another orange accent.
+     On white it has to fall back to the text colour or it disappears. */
+  --think-fg: #0d0d0d;
+  --diff-add: #116329;
+  --diff-del: #a40e26;
+}
+
+/* The two dark themes share everything except the ground they sit on, so the
+   shared half is declared once against both selectors. Splitting it this way
+   means each class stands alone — applying .midnight without .dark still gives
+   a complete palette, rather than half a light theme. */
+.dark,
+.midnight {
+  --text: #ececec;
+
+  --brand-orange: #f27229;
+  --brand-red: #e73e26;
+  --brand-gradient: linear-gradient(135deg, #f27229 0%, #e73e26 100%);
+  /* The logo orange clears 4.5:1 on both dark grounds, so it reads as text. */
+  --accent: #f27229;
+  --accent-fg: #1a0a02;
+  --accent-soft: rgba(242, 114, 41, 0.16);
+  --accent-border: rgba(242, 114, 41, 0.45);
+  --accent-glow: rgba(242, 114, 41, 0.35);
+  --think-fg: #ffffff;
+  --diff-add: #7ee787;
+  --diff-del: #ff7b72;
+}
+
+/* Dark: a near-black carrying a trace of the brand's warmth. The saturation is
+   low enough (~5%) that it reads as neutral rather than brown, but a flat grey
+   goes inert under a warm accent — this keeps the ground and the orange in the
+   same family. Surfaces still separate by lightness, so edges don't depend on
+   a border to be visible. */
+.dark {
+  --bg: #151412;
+  --sidebar: #100f0e;
+  --input: #1f1e1b;
+  --secondary: #9b9791;
+  --muted: #7c7873;
+  --border: #2a2825;
+  --border-light: #35322e;
+  --user-bubble: #24221f;
+  --hover: #1e1c1a;
+  --code-bg: #100f0d;
+  --code-border: #2a2825;
+}
+
+/* Midnight: true black, for OLED panels where an unlit pixel costs nothing.
+   Everything has to be carried by borders here, since there is no lightness
+   below the ground to separate a surface from it. */
+.midnight {
+  --bg: #000000;
+  --sidebar: #000000;
+  --input: #121212;
+  --secondary: #8e8ea0;
+  --muted: #6e6e80;
+  --border: #1f1f1f;
+  --border-light: #232323;
+  --user-bubble: #1e1e1e;
+  --hover: #1a1a1a;
+  --code-bg: #121212;
+  --code-border: #232323;
+}
+
+/* Bundled rather than assumed installed: neither family ships with a stock
+   macOS or Linux install, so relying on the system copy meant the app quietly
+   fell back to Georgia and the platform sans everywhere but this machine.
+   Both are SIL OFL; see src/assets/fonts/LICENSE.md.
+
+   swap: the fallback shows immediately and is replaced when the face loads.
+   These are local files, so that window is a frame or two — but "block" would
+   mean a flash of nothing at all if a file ever failed to resolve. */
+@font-face {
+  font-family: "PT Serif";
+  src: url("../assets/fonts/PTSerif-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "PT Serif";
+  src: url("../assets/fonts/PTSerif-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "PT Serif";
+  src: url("../assets/fonts/PTSerif-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "PT Serif";
+  src: url("../assets/fonts/PTSerif-BoldItalic.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+/* Variable: one file covers the whole weight range, so 500 and 600 render as
+   real intermediate weights instead of being synthesised from 400. */
+@font-face {
+  font-family: Inter;
+  src: url("../assets/fonts/Inter-Variable.ttf") format("truetype-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: Inter;
+  src: url("../assets/fonts/Inter-Italic-Variable.ttf") format("truetype-variations");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* PT Serif carries the reading surface — messages, headings, titles. Inter
+   takes the metadata and anything small, where a serif turns to mush. Both are
+   installed locally, so there's nothing to fetch. */
+:root {
+  --font-serif: "PT Serif", Georgia, "Liberation Serif", "DejaVu Serif", "Times New Roman", serif;
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Liberation Sans", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  font-family: var(--font-serif);
+}
+
+/* Form controls don't inherit the body face on their own. */
+input,
+textarea,
+select,
+button {
+  font-family: inherit;
+}
+
+/* Subtext: the app's own muted colours, plus anything at a size where the
+   serif's contrast starts to break down. */
+.text-secondary,
+.text-muted,
+[class*="text-[10px]"],
+[class*="text-[11px]"],
+[class*="text-[12px]"],
+[class*="text-[13px]"] {
+  font-family: var(--font-sans);
+}
+
+.font-mono,
+code,
+pre,
+kbd {
+  font-family: var(--font-mono);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-border);
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.brand-gradient {
+  background: var(--brand-gradient);
+}
+
+/* ---------------------------------------------------------------------------
+   Bevelled controls.
+
+   A dark key lit from above, sitting in a recessed socket, with a hue-tinted
+   rim that blooms from the bottom on hover. The socket is the ::before (drawn
+   slightly larger than the button, behind its background); the bloom is the
+   ::after. Deliberately dark in both themes — the material only reads if the
+   key is darker than what's behind it.
+   --------------------------------------------------------------------------- */
+:root {
+  --bevel-hue: 22deg; /* the brand orange, as a hue for the rim light */
+  --bevel-transition: 0.35s;
+  /* Light: a pale key in a pale socket. The light still comes from above, so
+     the sheen stays on top and the shadow underneath — only the polarity of
+     the material changes, not the direction of the lighting. */
+  --bevel-base: #ececec;
+  --bevel-face: #1a1a1a;
+  --bevel-rim: rgba(0, 0, 0, 0.14);
+  --bevel-sheen-1: rgba(255, 255, 255, 0.9);
+  --bevel-sheen-2: rgba(255, 255, 255, 0.55);
+  --bevel-sheen-3: rgba(255, 255, 255, 0.3);
+  --bevel-sheen-4: rgba(255, 255, 255, 0.16);
+  --bevel-drop: rgba(0, 0, 0, 0.1);
+  --bevel-socket: linear-gradient(0deg, rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.16));
+  --bevel-socket-hi: rgba(255, 255, 255, 0.85);
+  --bevel-socket-lo: rgba(0, 0, 0, 0.1);
+  /* The inset that reads as the bloom catching the socket wall. On a pale key
+     a white glint is invisible, so light mode deepens instead of brightens. */
+  --bevel-glint: rgba(0, 0, 0, 0.12);
+  --bevel-glint-soft: rgba(0, 0, 0, 0.09);
+  --bevel-active-bg: hsla(var(--bevel-hue), 85%, 88%, 0.75);
+  --bevel-disabled-fg: rgba(0, 0, 0, 0.3);
+  --bevel-disabled-rim: rgba(0, 0, 0, 0.08);
+  --bevel-disabled-sheen: rgba(255, 255, 255, 0.5);
+}
+
+.dark,
+.midnight {
+  --bevel-base: #131313;
+  --bevel-face: #e8e8e8;
+  --bevel-rim: rgba(255, 255, 255, 0.13);
+  --bevel-sheen-1: rgba(255, 255, 255, 0.2);
+  --bevel-sheen-2: rgba(255, 255, 255, 0.13);
+  --bevel-sheen-3: rgba(255, 255, 255, 0.08);
+  --bevel-sheen-4: rgba(255, 255, 255, 0.05);
+  --bevel-drop: rgba(0, 0, 0, 0.06);
+  --bevel-socket: linear-gradient(0deg, #0004, #000a);
+  --bevel-socket-hi: rgba(255, 255, 255, 0.13);
+  --bevel-socket-lo: rgba(0, 0, 0, 0.13);
+  --bevel-glint: rgba(255, 255, 255, 0.67);
+  --bevel-glint-soft: rgba(255, 255, 255, 0.53);
+  --bevel-active-bg: hsla(var(--bevel-hue), 50%, 20%, 0.5);
+  --bevel-disabled-fg: rgba(255, 255, 255, 0.25);
+  --bevel-disabled-rim: rgba(255, 255, 255, 0.07);
+  --bevel-disabled-sheen: rgba(255, 255, 255, 0.07);
+}
+
+.bevel {
+  --bevel-radius: 999px;
+  --bevel-pad: 3px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  color: var(--bevel-face);
+  background-color: var(--bevel-base);
+  border: solid 1px var(--bevel-rim);
+  border-radius: var(--bevel-radius);
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 1px var(--bevel-sheen-1),
+    inset 0 2px 2px var(--bevel-sheen-2),
+    inset 0 4px 4px var(--bevel-sheen-3),
+    inset 0 8px 8px var(--bevel-sheen-4),
+    0 1px 2px var(--bevel-drop),
+    0 2px 6px var(--bevel-drop);
+  transition:
+    box-shadow var(--bevel-transition),
+    border-color var(--bevel-transition),
+    background-color var(--bevel-transition),
+    color var(--bevel-transition);
+}
+
+/* The socket the key sits in. */
+.bevel::before {
+  content: "";
+  position: absolute;
+  top: calc(0px - var(--bevel-pad));
+  left: calc(0px - var(--bevel-pad));
+  width: calc(100% + var(--bevel-pad) * 2);
+  height: calc(100% + var(--bevel-pad) * 2);
+  border-radius: calc(var(--bevel-radius) + var(--bevel-pad));
+  pointer-events: none;
+  z-index: -1;
+  background-image: var(--bevel-socket);
+  box-shadow:
+    0 -8px 8px -6px #0000 inset,
+    0 -16px 16px -8px #0000 inset,
+    1px 1px 1px var(--bevel-socket-hi),
+    2px 2px 2px var(--bevel-socket-hi),
+    -1px -1px 1px var(--bevel-socket-lo),
+    -2px -2px 2px var(--bevel-socket-lo);
+  transition: box-shadow var(--bevel-transition);
+}
+
+/* The bloom, rising from the bottom edge. */
+.bevel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image: linear-gradient(
+    0deg,
+    #fff,
+    hsl(var(--bevel-hue), 100%, 68%),
+    hsla(var(--bevel-hue), 100%, 68%, 0.5),
+    8%,
+    transparent
+  );
+  opacity: 0;
+  mask-image: linear-gradient(0deg, #fff, transparent);
+  transition: opacity var(--bevel-transition), filter var(--bevel-transition);
+}
+
+.bevel:hover:not(:disabled) {
+  border-color: hsla(var(--bevel-hue), 100%, 80%, 0.4);
+}
+.bevel:hover:not(:disabled)::before {
+  box-shadow:
+    0 -8px 8px -6px var(--bevel-glint) inset,
+    0 -16px 16px -8px hsla(var(--bevel-hue), 100%, 70%, 0.3) inset,
+    1px 1px 1px var(--bevel-socket-hi),
+    2px 2px 2px var(--bevel-socket-hi),
+    -1px -1px 1px var(--bevel-socket-lo),
+    -2px -2px 2px var(--bevel-socket-lo);
+}
+.bevel:hover:not(:disabled)::after {
+  opacity: 1;
+}
+
+.bevel:active:not(:disabled) {
+  border-color: hsla(var(--bevel-hue), 100%, 80%, 0.7);
+  background-color: var(--bevel-active-bg);
+}
+.bevel:active:not(:disabled)::before {
+  box-shadow:
+    0 -8px 12px -6px var(--bevel-glint) inset,
+    0 -16px 16px -8px hsla(var(--bevel-hue), 100%, 70%, 0.8) inset,
+    1px 1px 1px var(--bevel-socket-hi),
+    2px 2px 2px var(--bevel-socket-hi),
+    -1px -1px 1px var(--bevel-socket-lo),
+    -2px -2px 2px var(--bevel-socket-lo);
+}
+.bevel:active:not(:disabled)::after {
+  opacity: 1;
+  filter: brightness(200%);
+}
+
+.bevel:focus-visible {
+  outline: none;
+  border-color: hsla(var(--bevel-hue), 100%, 80%, 0.55);
+}
+.bevel:focus-visible::after {
+  opacity: 0.7;
+}
+
+.bevel:disabled {
+  cursor: not-allowed;
+  color: var(--bevel-disabled-fg);
+  border-color: var(--bevel-disabled-rim);
+  box-shadow:
+    inset 0 1px 1px var(--bevel-disabled-sheen),
+    inset 0 8px 8px var(--bevel-disabled-rim);
+}
+.bevel:disabled::before {
+  opacity: 0.5;
+}
+
+/* Icon inside a bevel picks up the rim light on hover. */
+.bevel svg {
+  transition: filter var(--bevel-transition), color var(--bevel-transition);
+}
+.bevel:hover:not(:disabled) svg {
+  filter: drop-shadow(0 0 3px hsl(var(--bevel-hue), 100%, 70%)) drop-shadow(0 -4px 6px #0009);
+}
+
+/* Latched "on" state — the bloom stays lit. */
+.bevel-on {
+  border-color: hsla(var(--bevel-hue), 100%, 45%, 0.55);
+  color: var(--accent-fg);
+  background-color: var(--accent);
+}
+.bevel-on::after {
+  opacity: 0.9;
+}
+.bevel-on::before {
+  box-shadow:
+    0 -8px 8px -6px var(--bevel-glint-soft) inset,
+    0 -16px 16px -8px hsla(var(--bevel-hue), 100%, 70%, 0.35) inset,
+    1px 1px 1px var(--bevel-socket-hi),
+    2px 2px 2px var(--bevel-socket-hi),
+    -1px -1px 1px var(--bevel-socket-lo),
+    -2px -2px 2px var(--bevel-socket-lo);
+}
+
+/* Compact variant for icon buttons and chips. */
+.bevel-sm {
+  --bevel-pad: 2px;
+  --bevel-transition: 0.25s;
+  box-shadow:
+    inset 0 1px 1px var(--bevel-sheen-1),
+    inset 0 2px 2px var(--bevel-sheen-2),
+    inset 0 4px 5px var(--bevel-sheen-3),
+    0 1px 2px var(--bevel-drop);
+}
+
+/* Secondary "on" state for non-bevel contexts. */
+.chip-accent {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+/* `.bare` opts a field out — used by the composer textarea, which sits inside
+   a rounded pill that takes the focus ring itself (see .composer-shell). */
+input:focus-visible:not(.bare),
+textarea:focus-visible:not(.bare) {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.composer-shell:focus-within {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+textarea::placeholder {
+  color: var(--secondary);
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.caret-blink {
+  animation: blink 1s step-end infinite;
+}
+
+/* ---------------------------------------------------------------------------
+   Thinking indicator.
+
+   One dot splits into four, the ring turns a full clockwise revolution, merges
+   back, splits into the familiar three, bounces, and merges again. The spin is
+   a rotation on the wrapper; each dot only animates its own offset from centre.
+   The wrapper lands on exactly 360deg before the row phase, so the three dots
+   sit level rather than at some leftover angle.
+   --------------------------------------------------------------------------- */
+.think {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 24px;
+  vertical-align: middle;
+}
+
+.think-spin {
+  position: absolute;
+  inset: 0;
+  /* Linear: a revolution that eases in and out reads as a lurch, not a spin. */
+  animation: think-spin 3.6s linear infinite;
+}
+
+.think i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6.5px;
+  height: 6.5px;
+  margin: -3.25px 0 0 -3.25px;
+  border-radius: 50%;
+  background: var(--think-fg);
+  /* The base is linear and each keyframe carries its own curve, so the motion
+     keeps momentum through a stop instead of settling at every one. */
+  animation-duration: 3.6s;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.think i:nth-child(1) { animation-name: think-d1; }
+.think i:nth-child(2) { animation-name: think-d2; }
+.think i:nth-child(3) { animation-name: think-d3; }
+.think i:nth-child(4) { animation-name: think-d4; }
+
+@keyframes think-spin {
+  0%, 16% { transform: rotate(0deg); }
+  44%, 100% { transform: rotate(360deg); }
+}
+
+/* right on the ring, left in the row */
+@keyframes think-d1 {
+  0%, 6% { transform: translate(0, 0); animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); }
+  16%, 44% { transform: translate(8px, 0); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  52%, 56% { transform: translate(0, 0); animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); }
+  60% { transform: translate(-9px, 0); animation-timing-function: cubic-bezier(0.25, 0, 0.35, 1); }
+  65% { transform: translate(-9px, -5px); animation-timing-function: cubic-bezier(0.65, 0, 0.75, 1); }
+  70% { transform: translate(-9px, 0); animation-timing-function: cubic-bezier(0.25, 0, 0.35, 1); }
+  75% { transform: translate(-9px, -5px); animation-timing-function: cubic-bezier(0.65, 0, 0.75, 1); }
+  80%, 86% { transform: translate(-9px, 0); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  92%, 100% { transform: translate(0, 0); }
+}
+
+/* bottom on the ring, centre in the row */
+@keyframes think-d2 {
+  0%, 6% { transform: translate(0, 0); animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); }
+  16%, 44% { transform: translate(0, 8px); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  52%, 63% { transform: translate(0, 0); animation-timing-function: cubic-bezier(0.25, 0, 0.35, 1); }
+  68% { transform: translate(0, -5px); animation-timing-function: cubic-bezier(0.65, 0, 0.75, 1); }
+  73% { transform: translate(0, 0); animation-timing-function: cubic-bezier(0.25, 0, 0.35, 1); }
+  78% { transform: translate(0, -5px); animation-timing-function: cubic-bezier(0.65, 0, 0.75, 1); }
+  83%, 100% { transform: translate(0, 0); }
+}
+
+/* left on the ring, right in the row */
+@keyframes think-d3 {
+  0%, 6% { transform: translate(0, 0); animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); }
+  16%, 44% { transform: translate(-8px, 0); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  52%, 56% { transform: translate(0, 0); animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); }
+  60% { transform: translate(9px, 0); animation-timing-function: cubic-bezier(0.25, 0, 0.35, 1); }
+  71% { transform: translate(9px, -5px); animation-timing-function: cubic-bezier(0.65, 0, 0.75, 1); }
+  76% { transform: translate(9px, 0); animation-timing-function: cubic-bezier(0.25, 0, 0.35, 1); }
+  81% { transform: translate(9px, -5px); animation-timing-function: cubic-bezier(0.65, 0, 0.75, 1); }
+  86% { transform: translate(9px, 0); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  92%, 100% { transform: translate(0, 0); }
+}
+
+/* top on the ring; sits out the three-dot bounce entirely */
+@keyframes think-d4 {
+  0%, 6% { transform: translate(0, 0); opacity: 1; animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); }
+  16%, 44% { transform: translate(0, -8px); opacity: 1; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  52% { transform: translate(0, 0); opacity: 1; }
+  57% { transform: translate(0, 0); opacity: 0; }
+  86% { transform: translate(0, 0); opacity: 0; }
+  91%, 100% { transform: translate(0, 0); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .think-spin { animation: none; }
+  .think i { animation: none; }
+  .think i:nth-child(1) { transform: translate(-9px, 0); }
+  .think i:nth-child(3) { transform: translate(9px, 0); }
+  .think i:nth-child(4) { opacity: 0; }
+}
+
+/* The streaming caret has to ride the last line of rendered markdown. As a
+   sibling element it lands on its own line, because the markdown ends in a
+   block-level <p>. Drawing it as an ::after *inside* the final block puts it
+   right after the last word. */
+.streaming-caret > :last-child::after,
+.streaming-caret > ul:last-child > li:last-child::after,
+.streaming-caret > ol:last-child > li:last-child::after,
+.streaming-caret > div:last-child pre code::after {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 0.12em;
+  border-radius: 1px;
+  vertical-align: -0.15em;
+  background: var(--think-fg);
+  animation: blink 1s step-end infinite;
+}
+
+/* Lists and code cards are containers — the caret belongs inside their last
+   item, not dangling after the whole block. These win on specificity. */
+.streaming-caret > ul:last-child::after,
+.streaming-caret > ol:last-child::after,
+.streaming-caret > div:last-child::after {
+  content: none;
+}
+
+.markdown p { margin: 4px 0; line-height: 1.6; }
+.markdown ul, .markdown ol { margin: 8px 0; padding-left: 1.5rem; }
+.markdown ul { list-style: disc; }
+.markdown ol { list-style: decimal; }
+.markdown li { margin: 2px 0; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 { font-weight: 700; margin: 12px 0 4px; line-height: 1.25; }
+.markdown h1 { font-size: 22px; }
+.markdown h2 { font-size: 18px; }
+.markdown h3 { font-size: 16px; }
+.markdown h4 { font-size: 14px; }
+.markdown blockquote {
+  border-left: 3px solid var(--border);
+  padding: 4px 12px;
+  margin: 8px 0;
+  color: var(--secondary);
+}
+.markdown hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+.markdown a { color: var(--accent); text-decoration: none; }
+.markdown a:hover { text-decoration: underline; }
+.markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  margin: 8px 0;
+}
+.markdown th, .markdown td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.markdown th { background: var(--input); }
+.markdown code:not(pre code) {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: var(--font-mono);
+}
+
+/* ---------------------------------------------------------------------------
+   The new-chat entrance.
+
+   The mark drops in from above while growing and fading up, then the greeting
+   types itself out underneath. The delay on the caret is what keeps the two
+   from arriving at once — the logo lands first and the line answers it.
+   --------------------------------------------------------------------------- */
+.greet-mark {
+  /* easeOutCubic rather than an expo curve: expo puts 97% of the movement in
+     the first quarter, which reads as a pop rather than a pan. This spreads
+     the travel across the whole duration so the descent is actually visible. */
+  animation: greet-drop 720ms cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+@keyframes greet-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-40px) scale(0.78);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* The caret is a box rather than a glyph so it can't be affected by the
+   serif's own metrics, and sits on the text colour so it reads as a cursor
+   rather than as accent decoration. */
+.greet-caret {
+  display: inline-block;
+  width: 0.06em;
+  min-width: 2px;
+  height: 0.92em;
+  margin-left: 0.06em;
+  vertical-align: -0.08em;
+  background: var(--text);
+  border-radius: 1px;
+}
+
+/* While typing it stays solid — a caret that blinks mid-word reads as a
+   glitch. It only starts blinking once the line has finished. */
+.greet-caret-idle {
+  animation: greet-blink 1.05s step-end infinite;
+}
+
+@keyframes greet-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .greet-mark {
+    animation: none;
+  }
+  .greet-caret,
+  .greet-caret-idle {
+    animation: none;
+    display: none;
+  }
+}

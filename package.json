@@ -1,0 +1,108 @@
+{
+  "name": "atla",
+  "productName": "Atla",
+  "version": "0.5.2",
+  "description": "Atla - a desktop AI chat client with a built-in adblocking browser. Bring your own model: Claude, OpenAI, Gemini, OpenRouter, Ollama, or any OpenAI-compatible endpoint.",
+  "author": "Aerovonix",
+  "main": "dist-electron/electron/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n VITE,ELECTRON -c blue,green \"vite\" \"npm:dev:electron\"",
+    "dev:electron": "node scripts/wait-and-launch.mjs",
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "build": "npm run build:electron && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit",
+    "icons": "electron scripts/make-icons.mjs",
+    "test:adblock": "npm run build:electron && electron scripts/test-adblock.mjs",
+    "test:browser": "npm run build && node scripts/run-selftest.mjs",
+    "test": "npm run typecheck && npm run test:adblock && npm run test:browser",
+    "package": "npm run build && electron-builder",
+    "start": "npm run build && electron .",
+    "package:mac": "npm run build && electron-builder --mac",
+    "package:linux": "npm run build && electron-builder --linux"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "remark-gfm": "^4.0.0",
+    "zustand": "^4.5.5",
+    "nanoid": "^5.0.7"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@types/node": "^22.5.4",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.0.1",
+    "electron": "^32.0.1",
+    "electron-builder": "^25.0.5",
+    "postcss": "^8.4.45",
+    "tailwindcss": "^3.4.10",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.3",
+    "wait-on": "^8.0.0"
+  },
+  "build": {
+    "appId": "com.aerovonix.atla",
+    "productName": "Atla",
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build/icon.png",
+      "category": "Development",
+      "synopsis": "Bring-your-own-model AI chat with a browser, terminal, and file access",
+      "desktop": {
+        "StartupWMClass": "Atla"
+      }
+    },
+    "nsis": {
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico"
+    },
+    "dmg": {
+      "artifactName": "${productName}-${version}-${arch}.dmg"
+    },
+    "appImage": {
+      "artifactName": "${productName}-${version}-${arch}.AppImage"
+    },
+    "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
+    ]
+  }
+}
