@@ -5,7 +5,7 @@
   "description": "Bring-your-own-model AI chat with a built-in browser, terminal, and file access",
   "author": {
     "name": "Aerovonix",
-    "email": "austingabman@gmail.com"
+    "email": "aria@aerovonix.dev"
   },
   "main": "dist-electron/electron/main.js",
   "type": "module",
