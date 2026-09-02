@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { desktopCapturer, ipcMain, screen, systemPreferences } from "electron";
+import { desktopCapturer, ipcMain, screen, shell, systemPreferences } from "electron";
 import type { DesktopAction, DesktopWindow } from "../shared/desktopPolicy.js";
 
 /**
@@ -298,6 +298,43 @@ export async function perform(action: DesktopAction): Promise<void> {
   if (process.platform === "win32") return actWindows(action);
   if (process.platform === "darwin") return actMac(action);
   return actLinux(action);
+}
+
+/**
+ * What macOS will and won't let Atla do right now.
+ *
+ * Local Network is deliberately absent: macOS exposes no API to read its
+ * state, and guessing would be worse than saying nothing. It's prompted for
+ * automatically on the first LAN request, so onboarding describes it rather
+ * than claiming to know.
+ */
+export function permissionStatus(): { platform: string; screen: boolean; accessibility: boolean } {
+  if (process.platform !== "darwin") {
+    return { platform: process.platform, screen: true, accessibility: true };
+  }
+  return {
+    platform: "darwin",
+    screen: systemPreferences.getMediaAccessStatus("screen") === "granted",
+    // `false` so this never raises a dialog on its own — onboarding asks the
+    // user to open Settings deliberately rather than ambushing them.
+    accessibility: systemPreferences.isTrustedAccessibilityClient(false)
+  };
+}
+
+const PANES: Record<string, string> = {
+  screen: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+  accessibility: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+  localnetwork: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork"
+};
+
+export function registerPermissionIpc() {
+  ipcMain.handle("permissions:status", () => permissionStatus());
+  ipcMain.handle("permissions:open", async (_e, which: string) => {
+    const url = PANES[String(which)];
+    if (!url) return { ok: false as const };
+    await shell.openExternal(url);
+    return { ok: true as const };
+  });
 }
 
 export function registerDesktopIpc() {

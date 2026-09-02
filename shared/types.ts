@@ -457,3 +457,10 @@ export interface DashStatus {
   addresses: string[];
   sessions: number;
 }
+
+/** What the OS currently permits. Non-macOS reports everything granted. */
+export interface PermissionStatus {
+  platform: string;
+  screen: boolean;
+  accessibility: boolean;
+}

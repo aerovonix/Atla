@@ -12,7 +12,7 @@ import type {
   TerminalEvent
 } from "../shared/types.js";
 import type { SystemInfo } from "../shared/environment.js";
-import type { DashStatus, FileReadResult, FileSaveResult } from "../shared/types.js";
+import type { DashStatus, FileReadResult, FileSaveResult, PermissionStatus } from "../shared/types.js";
 
 interface BrowserRpcRequest {
   id: string;
@@ -78,6 +78,10 @@ const api = {
       return () => ipcRenderer.removeListener("dash:request", listener);
     },
     reply: (id: string, payload: unknown) => ipcRenderer.send(`dash:reply:${id}`, payload)
+  },
+  permissions: {
+    status: (): Promise<PermissionStatus> => ipcRenderer.invoke("permissions:status"),
+    open: (which: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("permissions:open", which)
   },
   desktop: {
     kill: (): Promise<{ ok: true }> => ipcRenderer.invoke("desktop:kill"),

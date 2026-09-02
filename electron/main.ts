@@ -10,7 +10,7 @@ import { initTerminal, registerTerminalIpc } from "./terminal.js";
 import { registerFileIpc } from "./files.js";
 import { reviewAndRevise } from "./critic.js";
 import { describeError } from "../shared/errors.js";
-import { registerDesktopIpc } from "./desktop.js";
+import { registerDesktopIpc, registerPermissionIpc } from "./desktop.js";
 import { initWebDash, registerWebDashIpc } from "./webdash.js";
 import { initNotify, registerNotifyIpc } from "./notify.js";
 import { initApprovals, registerApprovalIpc, clearApprovals } from "./approvals.js";
@@ -142,6 +142,7 @@ app.whenReady().then(async () => {
   registerTerminalIpc();
   registerFileIpc();
   registerDesktopIpc();
+  registerPermissionIpc();
   registerWebDashIpc();
   registerNotifyIpc();
   initWebDash(mainWindow!);

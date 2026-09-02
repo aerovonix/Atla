@@ -4,6 +4,7 @@ import { AtlaMark } from "./AtlaMark";
 import { CheckIcon, ChevronDownIcon } from "./icons";
 import { PROVIDER_LABELS, type ProviderKind, type ThemeSetting } from "../../shared/types";
 import { COPY, PROVIDER_GUIDES, guideFor, providerReady } from "../../shared/onboarding";
+import type { PermissionStatus } from "../../shared/types";
 
 /**
  * First run.
@@ -51,6 +52,81 @@ function Choice({
   );
 }
 
+/**
+ * macOS gates three things Atla uses, and all three fail in ways that don't
+ * name themselves — a blocked LAN request reads as a routing error, a blocked
+ * screenshot as a broken tool, blocked input as nothing happening at all.
+ * Better to surface them once, here, than to let each one be discovered as a
+ * separate mystery later.
+ */
+function MacPermissions({ status, onRecheck }: { status: PermissionStatus; onRecheck: () => void }) {
+  const rows: { key: string; label: string; why: string; granted: boolean | null }[] = [
+    {
+      key: "localnetwork",
+      label: "Local Network",
+      why: "Reaching a model on your own network, like Ollama. Atla asks for this the first time it tries.",
+      // macOS exposes no way to read this one, so it isn't claimed either way.
+      granted: null
+    },
+    {
+      key: "screen",
+      label: "Screen Recording",
+      why: "Taking screenshots, so the model can see what's on screen.",
+      granted: status.screen
+    },
+    {
+      key: "accessibility",
+      label: "Accessibility",
+      why: "Clicking and typing in other apps.",
+      granted: status.accessibility
+    }
+  ];
+
+  return (
+    <div className="space-y-3">
+      {rows.map((r) => (
+        <div key={r.key} className="rounded-xl border border-border p-3.5 flex items-start gap-3">
+          <span
+            className="w-2 h-2 rounded-full shrink-0 mt-2"
+            style={{
+              background:
+                r.granted === true ? "var(--diff-add)" : r.granted === false ? "var(--accent)" : "var(--muted)"
+            }}
+          />
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-medium">
+              {r.label}
+              {r.granted === true && <span className="text-secondary font-normal"> · granted</span>}
+              {r.granted === false && <span className="text-secondary font-normal"> · not yet</span>}
+              {r.granted === null && <span className="text-secondary font-normal"> · asked when needed</span>}
+            </div>
+            <p className="text-[12px] text-secondary mt-1 leading-relaxed">{r.why}</p>
+          </div>
+          {r.granted !== true && (
+            <button
+              onClick={() => void window.atla?.permissions?.open(r.key)}
+              className="shrink-0 text-[12px] px-2.5 py-1 rounded-full border border-border text-secondary hover:bg-hover transition-colors"
+            >
+              Open
+            </button>
+          )}
+        </div>
+      ))}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onRecheck}
+          className="text-[12px] px-3 py-1.5 rounded-full border border-border text-secondary hover:bg-hover transition-colors"
+        >
+          Check again
+        </button>
+        <p className="text-[11px] text-secondary flex-1">
+          Granting Screen Recording or Accessibility needs Atla restarted before it takes effect.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function Onboarding({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState(0);
   const settings = useStore((s) => s.settings);
@@ -67,7 +143,23 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [baseUrl, setBaseUrl] = useState("");
   const [name, setName] = useState(settings.profileName === "You" ? "" : settings.profileName);
   const [checking, setChecking] = useState(false);
+  const [perms, setPerms] = useState<PermissionStatus | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
+
+  const readPerms = () => void window.atla?.permissions?.status().then(setPerms);
+  useEffect(() => readPerms(), []);
+  // Only macOS gates anything, so the step simply doesn't exist elsewhere.
+  const needsPerms = perms?.platform === "darwin";
+
+  // Built as a list rather than fixed indices: a conditional step would
+  // otherwise shift every number after it and silently mis-route the buttons.
+  const steps: ("welcome" | "provider" | "permissions" | "preferences")[] = [
+    "welcome",
+    "provider",
+    ...(needsPerms ? (["permissions"] as const) : []),
+    "preferences"
+  ];
+  const current = steps[Math.min(step, steps.length - 1)];
 
   const guide = kind ? guideFor(kind) : undefined;
   const ready = kind ? providerReady(kind, apiKey, baseUrl) : false;
@@ -103,7 +195,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       if (!after?.models?.length) {
         setCheckError("Connected, but no models came back. Check the key or endpoint.");
       } else {
-        setStep(2);
+        setStep((v) => v + 1);
       }
     } catch (err) {
       setCheckError(err instanceof Error ? err.message : "Couldn't reach that provider.");
@@ -133,15 +225,27 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         <div className="flex flex-col items-center text-center">
           <AtlaMark size={72} className="mb-6" />
           <h1 className="text-[32px] leading-[1.15] font-bold tracking-tight">
-            {step === 0 ? COPY.welcome.title : step === 1 ? COPY.provider.title : step === 2 ? COPY.preferences.title : COPY.done.title}
+            {current === "welcome"
+              ? COPY.welcome.title
+              : current === "provider"
+                ? COPY.provider.title
+                : current === "permissions"
+                  ? "A few macOS permissions"
+                  : COPY.preferences.title}
           </h1>
           <p className="mt-3 text-[14px] text-secondary max-w-[440px]">
-            {step === 0 ? COPY.welcome.body : step === 1 ? COPY.provider.body : step === 2 ? COPY.preferences.body : COPY.done.body}
+            {current === "welcome"
+              ? COPY.welcome.body
+              : current === "provider"
+                ? COPY.provider.body
+                : current === "permissions"
+                  ? "macOS asks before an app can see your screen, control other apps, or reach your local network. You can grant these now or later — Atla will say which one is missing if it needs it."
+                  : COPY.preferences.body}
           </p>
         </div>
 
         <div className="mt-8 space-y-2.5">
-          {step === 1 && !kind && (
+          {current === "provider" && !kind && (
             <>
               {PROVIDER_GUIDES.map((g) => (
                 <Choice
@@ -155,7 +259,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             </>
           )}
 
-          {step === 1 && kind && (
+          {current === "provider" && kind && (
             <div className="space-y-3">
               <button
                 onClick={() => {
@@ -227,7 +331,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             </div>
           )}
 
-          {step === 2 && (
+          {current === "permissions" && perms && <MacPermissions status={perms} onRecheck={readPerms} />}
+
+          {current === "preferences" && (
             <div className="space-y-4">
               <label className="block">
                 <span className="block text-[12px] text-secondary mb-1.5">What should it call you?</span>
@@ -271,10 +377,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
         <div className="mt-8 flex items-center gap-3">
           <button onClick={skip} className="text-[12px] text-secondary hover:text-text transition-colors">
-            {step === 2 ? "Skip" : "Skip setup"}
+            {current === "preferences" ? "Skip" : "Skip setup"}
           </button>
           <div className="flex-1" />
-          {step > 0 && step < 3 && (
+          {step > 0 && current !== "welcome" && (
             <button
               onClick={() => setStep((v) => v - 1)}
               className="bevel bevel-sm px-4 py-2 rounded-full text-sm font-medium"
@@ -282,12 +388,12 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
               Back
             </button>
           )}
-          {step === 0 && (
+          {current === "welcome" && (
             <button onClick={() => setStep(1)} className="bevel bevel-on px-5 py-2 rounded-full text-sm font-medium">
               Get started
             </button>
           )}
-          {step === 1 && (
+          {current === "provider" && (
             <button
               onClick={() => void connect()}
               disabled={!ready || checking}
@@ -296,7 +402,15 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
               {checking ? "Connecting…" : "Connect"}
             </button>
           )}
-          {step === 2 && (
+          {current === "permissions" && (
+            <button
+              onClick={() => setStep((v) => v + 1)}
+              className="bevel bevel-on px-5 py-2 rounded-full text-sm font-medium"
+            >
+              Continue
+            </button>
+          )}
+          {current === "preferences" && (
             <button onClick={finish} className="bevel bevel-on px-5 py-2 rounded-full text-sm font-medium">
               Done
             </button>
@@ -304,7 +418,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         </div>
 
         <div className="mt-6 flex items-center justify-center gap-1.5">
-          {[0, 1, 2].map((i) => (
+          {steps.map((_, i) => (
             <span
               key={i}
               className="h-1 rounded-full transition-all"
