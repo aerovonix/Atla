@@ -245,3 +245,14 @@ Light mode uses a deeper `#c2410c` for accent *text* since the raw brand orange 
 - Gemini can't combine its native search grounding with function calling in one request; Atla picks one per message (see **Built-in browser**).
 - File reads are capped at 512KB and skip anything that looks binary. `edit_file` needs an exact, unique match.
 - Approvals are per-run and per-kind; "Allow for this session" is never persisted, so a restart puts the gate back.
+
+## License
+
+**CC BY-NC-SA 4.0** — [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International](http://creativecommons.org/licenses/by-nc-sa/4.0/). The full text is in [LICENSE](LICENSE); this is the plain-English version:
+
+- **Free use & modification** — download, run, modify, hack, and redistribute it for personal or community use.
+- **Attribution required** — if you host a public-facing version, fork it, or pull code into your own project, you must credit the original creator explicitly.
+- **Strictly non-commercial** — you may not sell this software, package it into a paid SaaS, or otherwise profit off this codebase in any form.
+- **ShareAlike** — derivatives and forks must be shared freely under these same terms.
+
+The bundled fonts in `src/assets/fonts/` are **not** covered by the above: PT Serif and Inter are under the SIL Open Font License, which travels with them. See [`src/assets/fonts/LICENSE.md`](src/assets/fonts/LICENSE.md).
