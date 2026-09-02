@@ -38,13 +38,27 @@ convention: see `acceptsVersion` in [shared/channels.ts](shared/channels.ts).
 
 ## Cutting a release
 
+Start a new version's prerelease series first, then step along it. These are
+two different npm operations and mixing them up is easy: `prerelease` bumps
+the *patch* of a finished release, so running it on 0.6.1 gives you
+`0.6.2-alpha.0`, not the new minor you probably meant.
+
 ```bash
-npm run version:alpha    # 0.7.0-alpha.1
-npm run version:beta     # 0.7.0-beta.1
-npm run version:rc       # 0.7.0-rc.1
-npm run version:patch    # 0.7.1
-npm run version:minor    # 0.7.0
+npm run version:next-minor   # 0.6.1        -> 0.7.0-alpha.0
+npm run version:next-patch   # 0.6.1        -> 0.6.2-alpha.0
 ```
+
+Then step along the series, and promote it by changing the identifier:
+
+```bash
+npm run version:alpha    # 0.7.0-alpha.0 -> 0.7.0-alpha.1
+npm run version:beta     # 0.7.0-alpha.3 -> 0.7.0-beta.0
+npm run version:rc       # 0.7.0-beta.2  -> 0.7.0-rc.0
+npm run version:patch    # 0.7.0-rc.2    -> 0.7.0   (drops the tag)
+```
+
+`version:patch` on a prerelease finishes it rather than incrementing, which is
+what makes the last line the release step and not a mistake.
 
 Each writes `package.json`, commits, and tags. Push the branch **and** the tag:
 

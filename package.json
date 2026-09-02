@@ -29,7 +29,9 @@
     "version:beta": "npm version prerelease --preid=beta -m \"Cut %s\"",
     "version:rc": "npm version prerelease --preid=rc -m \"Cut %s\"",
     "version:patch": "npm version patch -m \"Release %s\"",
-    "version:minor": "npm version minor -m \"Release %s\""
+    "version:minor": "npm version minor -m \"Release %s\"",
+    "version:next-minor": "npm version preminor --preid=alpha -m \"Start %s\"",
+    "version:next-patch": "npm version prepatch --preid=alpha -m \"Start %s\""
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
