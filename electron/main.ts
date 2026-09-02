@@ -9,6 +9,7 @@ import { initBrowserBridge } from "./browserBridge.js";
 import { initTerminal, registerTerminalIpc } from "./terminal.js";
 import { registerFileIpc } from "./files.js";
 import { reviewAndRevise } from "./critic.js";
+import { describeError } from "../shared/errors.js";
 import { registerDesktopIpc } from "./desktop.js";
 import { initWebDash, registerWebDashIpc } from "./webdash.js";
 import { initNotify, registerNotifyIpc } from "./notify.js";
@@ -115,7 +116,7 @@ app.whenReady().then(async () => {
       const models = await fetchModels(cfg);
       return { ok: true, models };
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      return { ok: false, error: describeError(err) };
     }
   });
 
@@ -131,7 +132,7 @@ app.whenReady().then(async () => {
         const title = await generateTitle(cfg, args.model, args.transcript, controller.signal);
         return title ? { ok: true, title } : { ok: false, error: "Empty title." };
       } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        return { ok: false, error: describeError(err) };
       } finally {
         clearTimeout(timer);
       }
@@ -217,7 +218,7 @@ app.whenReady().then(async () => {
         // stays in the transcript — the renderer marks it interrupted.
         send({ type: "done", requestId: req.requestId, fullText: "", aborted: true });
       } else {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = describeError(err);
         send({ type: "error", requestId: req.requestId, message });
       }
     } finally {

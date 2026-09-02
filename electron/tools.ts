@@ -2,6 +2,7 @@ import { browserControl } from "./browserBridge.js";
 import { runCommand, getCwd } from "./terminal.js";
 import { applyEdit, currentContent, listDir, numberLines, readFileText, resolvePath, writeFileText } from "./files.js";
 import { diffStat, unifiedDiff } from "../shared/diff.js";
+import { describeError } from "../shared/errors.js";
 import { capture, focusedWindowTitle, listWindows, perform, toScreenCoords } from "./desktop.js";
 import { fetchPage } from "./fetcher.js";
 import { decide, describeAction, type DesktopAction, type DesktopPolicy } from "../shared/desktopPolicy.js";
@@ -609,7 +610,7 @@ export async function executeTool(name: string, rawArgs: unknown, ctx: ToolConte
       }
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = describeError(err);
     return {
       content: `Tool "${name}" failed: ${message}`,
       event: { name, summary: message, ok: false, args: argsText, detail: message }
