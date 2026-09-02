@@ -62,7 +62,11 @@ const FLOOR: Readonly<Record<UpdateChannel, number>> = {
 export function acceptsVersion(channel: UpdateChannel, version: string): boolean {
   const id = prereleaseId(version);
   if (id === null) return true;
-  const rank = id in RANK ? RANK[id] : -1;
+  // An unknown label ranks *as* alpha rather than below it. Ranking it lower
+  // would leave it below every floor including alpha's, so the release would
+  // reach nobody at all -- a build that silently goes nowhere, which is the
+  // failure this whole module exists to avoid.
+  const rank = id in RANK ? RANK[id] : RANK.alpha;
   return rank >= FLOOR[channel];
 }
 
