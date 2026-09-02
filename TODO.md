@@ -4,6 +4,8 @@ Known work, roughly in the order it's worth doing. Items marked **unverified** a
 
 ## Before the next release
 
+- [ ] **Publish with `npm run release`, not `gh release create`.** electron-builder uploads the installer, the update feed *and* the `.blockmap` together. Uploading by hand missed the blockmap on v0.6.1, and electron-updater sat at 0% forever waiting for a file that 404'd — a differential download it could not plan and would not abandon. Without the blockmap every update is a full download of the whole installer.
+
 - [ ] **Cut v0.6.0 with `npm run release`, not `gh release create`.** The updater reads a `latest.yml` next to the installer; `gh` uploads only the `.exe`. Until one release exists with that file, auto-update finds nothing and silently reports "up to date". This first one becomes the baseline — anyone on v0.5.2 updates by hand once.
 - [ ] Build and attach the macOS DMG to the same release (`npm run release:mac` on the Mac).
 

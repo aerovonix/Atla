@@ -22,6 +22,12 @@ const { autoUpdater } = electronUpdater;
 /** Long enough that it isn't chatty, short enough to matter within a session. */
 const CHECK_INTERVAL_MS = 6 * 60 * 60_000;
 
+/**
+ * How long a download may make no progress before it is declared stuck. Long
+ * enough that a slow connection is never mistaken for a hang.
+ */
+const STALL_TIMEOUT_MS = 90_000;
+
 let targetWindow: BrowserWindow | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
 let enabled = true;
@@ -65,16 +71,49 @@ export function initUpdater(win: BrowserWindow, autoUpdateEnabled: boolean) {
   const support = supportCheck();
   state = { ...state, supported: support.supported, message: support.reason };
 
+  /**
+   * A download that stops making progress looks exactly like a slow one, and
+   * says nothing either way. This was not hypothetical: a missing .blockmap on
+   * the release made electron-updater sit at 0% indefinitely with no error,
+   * and the UI reported "Downloading 0%" forever because that was all it knew.
+   */
+  const stall = {
+    timer: null as ReturnType<typeof setTimeout> | null,
+    clear() {
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = null;
+    },
+    arm() {
+      this.clear();
+      this.timer = setTimeout(() => {
+        if (state.status !== "downloading") return;
+        push({
+          status: "idle",
+          percent: undefined,
+          message:
+            "The download stopped making progress and was given up on. Try again, or download the new version from the releases page."
+        });
+      }, STALL_TIMEOUT_MS);
+    }
+  };
+
   autoUpdater.on("checking-for-update", () => push({ status: "checking", message: undefined }));
-  autoUpdater.on("update-available", (info) =>
-    push({ status: "downloading", availableVersion: info.version, percent: 0, message: undefined })
-  );
+  autoUpdater.on("update-available", (info) => {
+    push({ status: "downloading", availableVersion: info.version, percent: 0, message: undefined });
+    stall.arm();
+  });
   autoUpdater.on("update-not-available", () => push({ status: "idle", availableVersion: undefined }));
-  autoUpdater.on("download-progress", (p) => push({ status: "downloading", percent: Math.round(p.percent) }));
-  autoUpdater.on("update-downloaded", (info) =>
-    push({ status: "ready", availableVersion: info.version, percent: 100 })
-  );
+  autoUpdater.on("download-progress", (p) => {
+    // Progress is the only proof it is alive, so it is what resets the clock.
+    stall.arm();
+    push({ status: "downloading", percent: Math.round(p.percent) });
+  });
+  autoUpdater.on("update-downloaded", (info) => {
+    stall.clear();
+    push({ status: "ready", availableVersion: info.version, percent: 100 });
+  });
   autoUpdater.on("error", (err) => {
+    stall.clear();
     const text = err?.message ?? String(err);
     // macOS says this when the app isn't signed. It's a permanent condition,
     // not a transient failure, so stop rather than retry every six hours.
