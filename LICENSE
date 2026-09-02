@@ -436,3 +436,7 @@ public licenses.
 
 Creative Commons may be contacted at creativecommons.org.
 
+
+-----------------------------------------------------------------------
+Third-party assets: the fonts in src/assets/fonts/ are under the SIL Open
+Font License 1.1, not the license above. See src/assets/fonts/LICENSE.md.
