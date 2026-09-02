@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useAltShiftHeld } from "../hooks/useAltShiftHeld";
 import { useStore } from "../state/store";
 import { CloseIcon } from "./icons";
 import { ProviderSettings } from "./ProviderSettings";
@@ -770,6 +771,21 @@ function UpdatePanel() {
   const [state, setState] = useState<UpdateState | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Hold Alt/Option + Shift to reveal the channel switcher.
+  //
+  // It stays hidden because picking a channel is not a normal thing to want:
+  // the honest default is that updates simply arrive, and an alpha toggle sat
+  // next to it invites people onto builds that are expected to break.
+  //
+  // But it is only hidden while it is safe to hide. Once someone is actually
+  // on a prerelease the control stays visible unconditionally, because the
+  // one moment you desperately need the way back to stable is when the alpha
+  // you are running is broken -- and that is the worst possible moment to
+  // have to remember a key combination.
+  const revealed = useAltShiftHeld();
+  const onStable = settings.updateChannel === "stable";
+  const channelVisible = revealed || !onStable;
+
   useEffect(() => {
     void window.atla?.update?.state().then(setState);
     return window.atla?.update?.onState(setState);
@@ -793,20 +809,28 @@ function UpdatePanel() {
         label="Download updates automatically"
         hint="Checks a few times a day and downloads in the background. Nothing installs until you choose to restart."
       />
-      <Field
-        label="Release channel"
-        hint="Beta and alpha are prereleases — earlier, and likelier to be broken. Each tier still receives stable releases when they are the newest thing available."
-      >
-        <SegmentedControl
-          value={settings.updateChannel}
-          onChange={(v) => update({ updateChannel: v })}
-          options={[
-            { value: "stable", label: "Stable" },
-            { value: "beta", label: "Beta" },
-            { value: "alpha", label: "Alpha" }
-          ]}
-        />
-      </Field>
+      {channelVisible && (
+        <div className="secret-reveal">
+          <Field
+            label="Release channel"
+            hint={
+              onStable
+                ? "Branches, really: alpha builds come off testing, beta off beta, stable off main. Prereleases arrive earlier and break more. Each tier still receives stable releases when they are the newest thing available."
+                : "You are on a prerelease, so this stays visible — that is the way back to stable. Alpha builds come off testing, beta off beta, stable off main."
+            }
+          >
+            <SegmentedControl
+              value={settings.updateChannel}
+              onChange={(v) => update({ updateChannel: v })}
+              options={[
+                { value: "stable", label: "Stable" },
+                { value: "beta", label: "Beta" },
+                { value: "alpha", label: "Alpha" }
+              ]}
+            />
+          </Field>
+        </div>
+      )}
       <div className="flex items-center gap-3">
         <button
           onClick={async () => {

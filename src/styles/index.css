@@ -710,3 +710,32 @@ textarea::placeholder {
     display: none;
   }
 }
+
+/*
+ * The channel switcher fading in when Alt/Option + Shift is held.
+ *
+ * Short and slight on purpose: the control appears mid-interaction while a
+ * key is held, so anything longer than a glance reads as lag rather than as
+ * an animation, and the panel below it has to shift down to make room.
+ */
+@keyframes secret-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.secret-reveal {
+  animation: secret-reveal 140ms ease-out;
+}
+
+/* Someone who asked for less motion still gets the control, just without the slide. */
+@media (prefers-reduced-motion: reduce) {
+  .secret-reveal {
+    animation: none;
+  }
+}
