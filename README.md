@@ -246,6 +246,10 @@ Light mode uses a deeper `#c2410c` for accent *text* since the raw brand orange 
 - File reads are capped at 512KB and skip anything that looks binary. `edit_file` needs an exact, unique match.
 - Approvals are per-run and per-kind; "Allow for this session" is never persisted, so a restart puts the gate back.
 
+## Contributing
+
+Bug reports and small fixes are welcome; open an issue before starting anything large. See [CONTRIBUTING.md](CONTRIBUTING.md) for the branch flow, test expectations, and what the codebase cares about. Known gaps and unverified paths are in [TODO.md](TODO.md).
+
 ## License
 
 **CC BY-NC-SA 4.0** — [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International](http://creativecommons.org/licenses/by-nc-sa/4.0/). The full text is in [LICENSE](LICENSE); this is the plain-English version:

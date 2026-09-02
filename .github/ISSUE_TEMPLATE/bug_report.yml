@@ -1,0 +1,71 @@
+name: Bug report
+description: Something isn't working the way it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: if Atla showed you an error message, please include it verbatim. Atla tries hard to make failures name themselves, and the exact wording usually points straight at the cause.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, and what Atla did instead of what you expected.
+      placeholder: |
+        I turned on the terminal and asked it to list a folder. It said the command was declined, but no approval prompt ever appeared.
+    validations:
+      required: true
+
+  - type: textarea
+    id: error
+    attributes:
+      label: The error, exactly as shown
+      description: Copy it verbatim, including anything after a dash. Leave blank if there wasn't one.
+      render: text
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Atla version
+      description: Settings → About, or the installer filename.
+      placeholder: "0.6.0"
+    validations:
+      required: true
+
+  - type: input
+    id: provider
+    attributes:
+      label: Model and provider
+      description: Which provider and model were selected. Say "not applicable" if it isn't a chat problem.
+      placeholder: "Ollama · llama3.1:8b"
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce it
+      description: The steps, if you can find them. "Happens sometimes" is still worth reporting — say so rather than guessing.
+      placeholder: |
+        1. New chat
+        2. Turn on Terminal in the + menu
+        3. Ask it to run `ls`
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Worth ruling out first
+      options:
+        - label: I'm on the latest version, or have said which version above
+          required: true
+        - label: On macOS, I've checked System Settings → Privacy & Security for a permission Atla might be missing

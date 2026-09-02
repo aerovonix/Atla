@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest something Atla should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Atla is a solo project with opinions — particularly about approval gates and what the model may do without asking. A suggestion that cuts against those may still be declined, but it'll get a real answer either way.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The situation, not the solution. What you were doing when Atla got in the way is more useful than a feature name.
+      placeholder: |
+        I keep several chats going on the same codebase and lose track of which one has the working version of a file.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+      description: Optional. If you already have a shape in mind, describe it — but the problem above matters more.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
+      description: The workaround, if there is one. It says a lot about how much this actually costs you.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Does this involve the model acting on your machine?
+      description: Terminal, files, desktop control, or anything else with real-world effects.
+      options:
+        - label: Yes — and I've thought about what the approval prompt should say
+        - label: No, this is interface or convenience only
