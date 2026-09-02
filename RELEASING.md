@@ -82,17 +82,21 @@ that is the newest thing available.
 
 Two mechanics make this work, and they are easy to get subtly wrong:
 
-1. **electron-builder derives the channel file from the version string.**
-   `0.7.0-beta.1` publishes `beta.yml`; `0.7.0` publishes `latest.yml`. For the
-   GitHub provider it publishes *only* that one file — the cascade that would
-   also write `alpha.yml` and `beta.yml` alongside a stable release is
-   deliberately disabled for GitHub.
+1. **With the GitHub provider, every release publishes `latest.yml` — and only
+   that.** The version string does *not* select the feed name here: the channel
+   derived from the version is applied to the generic provider, while GitHub's
+   publisher ignores it and relies on the release's prerelease flag instead.
+   Verified by building `0.7.0-alpha.0`, which produced `latest.yml` and no
+   `alpha.yml`.
 
-2. **electron-updater picks the channel file from whichever tag it found**, not
-   from a channel you pin. So `autoUpdater.channel` is left unset on purpose.
-   Pinning it to `"beta"` makes a beta user request `beta.yml` from a stable
-   release, which does not exist, and the updater retries that 404 silently
-   forever.
+2. **electron-updater asks for `<prerelease-id>.yml` first**, derived from the
+   tag it found, and falls back to `latest.yml` when that 404s — but only while
+   `allowPrerelease` is on. So `autoUpdater.channel` is left unset on purpose:
+   pinning it to `"beta"` would make a *stable-channel* user request a
+   `beta.yml` that is never generated, with no fallback to rescue them.
+
+   Net effect: everything resolves through `latest.yml`, and tier is decided
+   entirely by `allowPrerelease` plus our own filter.
 
 That second failure is not hypothetical — it is what stranded the 0.6.0 → 0.6.1
 update at 0%, from a filename mismatch rather than a channel, and it took three

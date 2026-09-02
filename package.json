@@ -97,7 +97,9 @@
       "category": "Development",
       "synopsis": "Bring-your-own-model AI chat with a browser, terminal, and file access",
       "desktop": {
-        "StartupWMClass": "Atla"
+        "entry": {
+          "StartupWMClass": "Atla"
+        }
       }
     },
     "nsis": {
