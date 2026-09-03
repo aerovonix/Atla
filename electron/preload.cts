@@ -82,6 +82,16 @@ const api = {
     },
     reply: (id: string, payload: unknown) => ipcRenderer.send(`dash:reply:${id}`, payload)
   },
+  windows: {
+    popOut: (pane: string): Promise<boolean> => ipcRenderer.invoke("windows:pop-out", pane),
+    dock: (pane: string): Promise<boolean> => ipcRenderer.invoke("windows:dock", pane),
+    popped: (): Promise<string[]> => ipcRenderer.invoke("windows:popped"),
+    onPopped: (cb: (panes: string[]) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, panes: string[]) => cb(panes);
+      ipcRenderer.on("windows:popped", listener);
+      return () => ipcRenderer.removeListener("windows:popped", listener);
+    }
+  },
   settings: {
     get: (): Promise<AppSettings | null> => ipcRenderer.invoke("settings:get"),
     patch: (patch: Partial<AppSettings>): Promise<AppSettings | null> =>

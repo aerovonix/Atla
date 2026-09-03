@@ -12,7 +12,7 @@ import { attachDashBridge } from "./state/dashBridge";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { AtlaMark } from "./components/AtlaMark";
 import type { ComposerDraft } from "./components/Composer";
-import { resolveTheme } from "../shared/types";
+import { useAppliedTheme } from "./hooks/useAppliedTheme";
 
 /** Inert handler for the split pane, which has no draft or page of its own. */
 const noop = () => {};
@@ -36,22 +36,7 @@ export default function App() {
   // that paired before this effect ran.
   useEffect(() => attachDashBridge(), []);
 
-  useEffect(() => {
-    const apply = () => {
-      const resolved = resolveTheme(theme, window.matchMedia("(prefers-color-scheme: dark)").matches);
-      const root = document.documentElement;
-      // Both classes are toggled every time rather than only the winner, so
-      // switching between the two dark themes can't leave the old one on.
-      root.classList.toggle("dark", resolved === "dark");
-      root.classList.toggle("midnight", resolved === "midnight");
-    };
-    apply();
-    if (theme === "system") {
-      const mq = window.matchMedia("(prefers-color-scheme: dark)");
-      mq.addEventListener("change", apply);
-      return () => mq.removeEventListener("change", apply);
-    }
-  }, [theme]);
+  useAppliedTheme();
 
   const settings = useStore((s) => s.settings);
   const splitConversationId = useStore((s) => s.splitConversationId);

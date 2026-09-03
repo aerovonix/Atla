@@ -28,6 +28,7 @@ import {
 import { TRACKER_ALLOW, TRACKER_DOMAINS, TRACKER_PATTERNS } from "../shared/trackers.js";
 import { splitStreaming } from "../shared/streamSplit.js";
 import { acceptsVersion, prereleaseId, describeVersion } from "../shared/channels.js";
+import { popOutPane, poppedPanes, closeAllPopouts } from "./windows.js";
 import { unifiedDiff, diffStat } from "../shared/diff.js";
 import { buildEnvironmentPrompt, formatNow, osLabel, utcOffset } from "../shared/environment.js";
 import { systemInfo } from "./terminal.js";
@@ -1260,6 +1261,25 @@ export async function runSelfTest(): Promise<void> {
     check("the port is closed after stopping", !reachable);
 
     check("lanAddresses returns strings", lanAddresses().every((a) => typeof a === "string"));
+
+    console.log("\n[selftest] pop-out windows");
+    // Real BrowserWindows, created and destroyed. They flash on screen during
+    // a run, which is the cost of testing the thing rather than a stand-in.
+    check("nothing is popped out to begin with", poppedPanes().length === 0);
+
+    await popOutPane("browser", false, null);
+    check("popping out creates a window", poppedPanes().join(",") === "browser", poppedPanes().join(","));
+
+    // Asking twice means "show me the one I have", not "make another" -- the
+    // difference between focusing a window and slowly filling the screen.
+    await popOutPane("browser", false, null);
+    check("popping the same pane twice does not duplicate it", poppedPanes().length === 1, String(poppedPanes().length));
+
+    await popOutPane("terminal", false, null);
+    check("panes pop out independently", poppedPanes().length === 2, poppedPanes().join(","));
+
+    closeAllPopouts();
+    check("closing the main window takes the pop-outs with it", poppedPanes().length === 0, poppedPanes().join(","));
 
     console.log("\n[selftest] release channels");
     check("a final release reaches every channel",

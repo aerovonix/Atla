@@ -8,6 +8,7 @@ import { streamChat, generateTitle } from "./providers.js";
 import { fetchModels } from "./modelList.js";
 import { adblocker } from "./adblock.js";
 import { initSettings, registerSettingsIpc, withOwnedSettings } from "./sharedSettings.js";
+import { closeAllPopouts, registerWindowIpc } from "./windows.js";
 import { initBrowserBridge } from "./browserBridge.js";
 import { initTerminal, registerTerminalIpc } from "./terminal.js";
 import { registerFileIpc } from "./files.js";
@@ -86,6 +87,10 @@ async function createWindow() {
     }
   });
 
+  // The main window is the app. A popped pane outliving it would leave Atla
+  // running with no way back to a conversation.
+  mainWindow.on("close", () => closeAllPopouts());
+
   mainWindow.webContents.on("preload-error", (_event, preloadPath, error) => {
     console.error(`[preload] failed to load ${preloadPath}:`, error);
   });
@@ -125,6 +130,7 @@ app.whenReady().then(async () => {
   // so the adblocker and updater are configured before any window exists.
   initSettings(all.state.settings);
   registerSettingsIpc();
+  registerWindowIpc(isDev, () => mainWindow);
   adblocker.attach(BROWSER_PARTITION);
 
   ipcMain.handle("store:load", async () => loadAll());

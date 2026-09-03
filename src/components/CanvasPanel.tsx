@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { PopOutButton } from "./PopOutButton";
 import { isDirty, useCanvasStore, type CanvasTab } from "../state/canvasStore";
 import { CloseIcon, FileIcon } from "./icons";
 
@@ -125,6 +126,7 @@ export function CanvasPanel() {
           </button>
         ))}
         <div className="flex-1" />
+        <PopOutButton pane="canvas" />
         <button
           onClick={close}
           title="Hide the canvas"

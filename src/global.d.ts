@@ -13,8 +13,7 @@ import type {
   FileSaveResult,
   DashStatus,
   PermissionStatus,
-  UpdateState
-} from "../shared/types";
+  UpdateState, PaneKind } from "../shared/types";
 import type { DashRequest } from "../shared/dashProtocol";
 import type { SystemInfo } from "../shared/environment";
 
@@ -67,6 +66,12 @@ export interface AtlaBridge {
     stop: () => Promise<DashStatus>;
     onRequest: (cb: (payload: { id: string; request: DashRequest }) => void) => () => void;
     reply: (id: string, payload: unknown) => void;
+  };
+  windows: {
+    popOut: (pane: PaneKind) => Promise<boolean>;
+    dock: (pane: PaneKind) => Promise<boolean>;
+    popped: () => Promise<PaneKind[]>;
+    onPopped: (cb: (panes: PaneKind[]) => void) => () => void;
   };
   settings: {
     get: () => Promise<AppSettings | null>;

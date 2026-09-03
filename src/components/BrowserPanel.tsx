@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useStore } from "../state/store";
+import { PopOutButton } from "./PopOutButton";
 import { useBrowserStore } from "../state/browserStore";
 import { CloseIcon, ShieldIcon, ArrowLeftIcon, ArrowRightIcon, RegenerateIcon, HomeIcon, SendIcon } from "./icons";
 
@@ -416,6 +417,7 @@ export function BrowserPanel({ onSendPageToChat }: { onSendPageToChat: (info: { 
           placeholder="Search or enter address"
           className="flex-1 min-w-0 px-3 py-1.5 rounded-full text-xs border border-border bg-input outline-none"
         />
+        <PopOutButton pane="browser" />
         <button
           onClick={() => setOpen(false)}
           className="w-8 h-8 rounded-lg flex items-center justify-center text-secondary hover:bg-hover"

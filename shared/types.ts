@@ -5,6 +5,9 @@ import type { SpeedTier } from "./blocking.js";
 export type { SpeedTier };
 export type { UpdateChannel };
 
+/** Panes that can be shown in a window of their own. */
+export type PaneKind = "browser" | "terminal" | "canvas";
+
 import type { DesktopPolicy, DesktopScope } from "./desktopPolicy.js";
 
 export type ProviderKind =

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { PopOutButton } from "./PopOutButton";
 import { useTerminalStore } from "../state/terminalStore";
 import { CloseIcon, StopIcon, TrashIcon } from "./icons";
 
@@ -108,6 +109,7 @@ export function TerminalPanel() {
         >
           <TrashIcon width={13} height={13} />
         </button>
+        <PopOutButton pane="terminal" />
         <button
           onClick={() => setOpen(false)}
           className="w-7 h-7 rounded-md flex items-center justify-center text-secondary hover:bg-hover transition-colors"
