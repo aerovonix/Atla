@@ -2,12 +2,40 @@
 
 Known work, roughly in the order it's worth doing. Items marked **unverified** are written and building but have never actually been run — they're not known-broken, they're unknown.
 
-## Before the next release
+## Sandbox exit criteria
 
-- [ ] **Publish with `npm run release`, not `gh release create`.** electron-builder uploads the installer, the update feed *and* the `.blockmap` together. Uploading by hand missed the blockmap on v0.6.1, and electron-updater sat at 0% forever waiting for a file that 404'd — a differential download it could not plan and would not abandon. Without the blockmap every update is a full download of the whole installer.
+We stay on `testing` until the program is verified, not until it looks fine.
+Grouped by what is actually known, because "unverified" covers three very
+different situations and only one of them is fixable by using the app more.
 
-- [ ] **Cut v0.6.0 with `npm run release`, not `gh release create`.** The updater reads a `latest.yml` next to the installer; `gh` uploads only the `.exe`. Until one release exists with that file, auto-update finds nothing and silently reports "up to date". This first one becomes the baseline — anyone on v0.5.2 updates by hand once.
-- [ ] Build and attach the macOS DMG to the same release (`npm run release:mac` on the Mac).
+**Run and working (Windows):** chat and every provider, build, install over a
+previous version, launch, browser rendering. The suite is 450+ checks under a
+real Electron binary.
+
+**Re-verification owed after Electron 44.** These worked on Electron 32 and
+have not been re-exercised since the jump. Each fails quietly rather than
+loudly, which is what makes them worth deliberate checking:
+
+- [ ] Tracker blocking — `webRequest`. Fails as "pages load fine and nothing
+      is blocked"; the Blocked counter going quiet is the tell
+- [ ] Browser panel `<webview>` — tabs, back/forward, lean/full on panel
+      open and close. The most deprecated thing we depend on
+- [ ] Notifications — toast identity binds early on Windows, so a version
+      change is exactly when "atla.electron.app" would return
+- [ ] Terminal process kill — orphaned shell after a cancel
+- [ ] `desktopCapturer` screenshots
+
+**Never run on any platform.** No amount of daily use reaches these; they
+need deliberate exercise, and two need hardware we are not on:
+
+- [ ] Desktop actuation — clicks and typing. 30+ policy checks, zero
+      actuations ever fired. Belongs in a VM (see below)
+- [ ] Linux — never built or run
+- [ ] macOS — see below
+
+**Not verifiable by testing at all.** These are decisions, not bugs:
+code signing needs money; the web dash being plaintext HTTP needs a design
+change. Both are listed further down and neither blocks the sandbox.
 
 ## macOS — unverified paths
 

@@ -104,6 +104,16 @@ attempts to find because a missing update file reports nothing at all. Tier is
 therefore enforced through `isUpdateSupported` instead, and a stalled download
 now names itself after 90 seconds.
 
+## Publish with the tooling, not by hand
+
+Use `npm run release`. electron-builder uploads the installer, the update feed
+and the `.blockmap` together; `gh release create` uploads only what you name.
+
+v0.6.1 was published by hand and the blockmap was missed, so every update was
+a full download of the whole installer rather than a differential one. v0.6.0
+has no blockmap for the same reason. Neither is worth backfilling, but neither
+should happen again.
+
 ## Filenames
 
 Artifact names must not contain spaces. GitHub rewrites spaces in uploaded
