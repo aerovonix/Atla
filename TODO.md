@@ -59,15 +59,28 @@ Neither hardware acceleration nor the code cache were at fault; both were
 checked and were already correct.
 
 Typecheck, both test suites and the build pass with no source changes, and
-the suites run under the real Electron binary. That is not the same as the
-app having been used, so before this is promoted to `beta`:
+the suites run under the real Electron binary.
 
-- [ ] Re-run Speedometer 3.1 and record the new number
-- [ ] Exercise the browser panel: tabs, navigation, tracker blocking, the
-      lean/full mode switch
+**Measured on 0.7.0-alpha.0:** Speedometer 3.1 went from **10.6 to 16.4** —
+ahead of Chrome's 15.5 and Brave's 15.2 on the same machine. Worth keeping
+the comparison honest, though: Atla's viewport runs no extensions, no
+profile sync and no browser chrome, so some of the lead over Chrome is a
+clean room rather than a faster engine. The 55% gain over our own previous
+build is the part that is unambiguously ours.
+
+- [x] Re-run Speedometer 3.1 and record the new number — 16.4
+- [x] `npm audit` triaged: both findings (esbuild moderate, vite high) are
+      dev-only. Neither is a production dependency and `app.asar` contains
+      zero entries for either, so they affect `npm run dev` and nothing that
+      ships. Still worth a vite 5 → 7 bump eventually, but not a blocker.
+- [x] electron-builder 26 produces a working installer; installed over 0.6.1
+      in place, user data preserved, app launches
+- [ ] Exercise the browser panel properly: tabs, navigation, tracker
+      blocking, the lean/full mode switch. Speedometer exercised rendering
+      but none of the panel's own machinery.
 - [ ] Exercise desktop capture — `desktopCapturer` and the macOS permission
-      probes still typecheck, but their behaviour is unverified here
-- [ ] Confirm electron-builder 26 still produces a working installer, and
-      that the update feed and asset names still agree
-- [ ] `npm audit` reports 2 vulnerabilities (1 moderate, 1 high) after the
-      upgrade — triage before release
+      probes typecheck, but their behaviour is unverified
+- [ ] Confirm the update feed and asset names still agree once a prerelease
+      is actually published to GitHub
+- [ ] Re-check that `latest.yml` is what a published prerelease serves, now
+      that the naming is understood rather than assumed
