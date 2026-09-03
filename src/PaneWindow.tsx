@@ -51,12 +51,17 @@ export function PaneWindow({ pane }: { pane: PaneKind }) {
   return (
     <div className="pane-window h-screen w-screen flex overflow-hidden" style={{ background: "var(--bg)" }}>
       {/*
-        A popped-out browser has no chat beside it to send a page to. Rather
-        than pretend, the button routes through the main window — see
-        window.atla.windows. For now this is inert, so the affordance is
-        absent rather than broken.
+        A popped-out browser has no chat beside it, so a page is handed to the
+        main window instead, which raises itself to show the result. If the
+        main window has gone the message is dropped — the app is closing.
       */}
-      {pane === "browser" && <BrowserPanel onSendPageToChat={() => {}} />}
+      {pane === "browser" && (
+        <BrowserPanel
+          onSendPageToChat={(info) => {
+            void window.atla?.windows?.toMain({ kind: "page-to-chat", ...info });
+          }}
+        />
+      )}
       {pane === "terminal" && <TerminalPanel />}
       {pane === "canvas" && <CanvasPanel />}
     </div>

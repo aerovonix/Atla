@@ -3,6 +3,7 @@ import type {
   AdblockStats,
   ApprovalRequest,
   AppSettings,
+  PaneMessage,
   AppState,
   ChatStreamEvent,
   ChatStreamRequest,
@@ -86,6 +87,12 @@ const api = {
     popOut: (pane: string): Promise<boolean> => ipcRenderer.invoke("windows:pop-out", pane),
     dock: (pane: string): Promise<boolean> => ipcRenderer.invoke("windows:dock", pane),
     popped: (): Promise<string[]> => ipcRenderer.invoke("windows:popped"),
+    toMain: (message: unknown): Promise<boolean> => ipcRenderer.invoke("windows:to-main", message),
+    onMessage: (cb: (m: PaneMessage) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, m: PaneMessage) => cb(m);
+      ipcRenderer.on("windows:message", listener);
+      return () => ipcRenderer.removeListener("windows:message", listener);
+    },
     onPopped: (cb: (panes: string[]) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, panes: string[]) => cb(panes);
       ipcRenderer.on("windows:popped", listener);

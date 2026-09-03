@@ -1,5 +1,6 @@
 import { BrowserWindow, ipcMain } from "electron";
 import path from "node:path";
+import type { PaneMessage } from "../shared/types.js";
 import { fileURLToPath } from "node:url";
 
 // This file is ESM, where __dirname does not exist. Without this the preload
@@ -97,6 +98,21 @@ export function closeAllPopouts() {
 }
 
 export function registerWindowIpc(isDev: boolean, getMain: () => BrowserWindow | null) {
+  /**
+   * A popped-out pane has no chat beside it, so anything it wants to say to a
+   * conversation has to travel through the main window. Routed via main
+   * rather than window-to-window because only main knows which window is the
+   * main one -- and if it has gone, the message is dropped rather than
+   * queued: the app is closing.
+   */
+  ipcMain.handle("windows:to-main", (_e, message: PaneMessage) => {
+    const main = getMain();
+    if (!main || main.isDestroyed()) return false;
+    main.webContents.send("windows:message", message);
+    main.focus();
+    return true;
+  });
+
   ipcMain.handle("windows:pop-out", async (_e, pane: PaneKind) => {
     if (pane !== "browser" && pane !== "terminal" && pane !== "canvas") return false;
     await popOutPane(pane, isDev, getMain());

@@ -13,6 +13,7 @@ import { UpdateBanner } from "./components/UpdateBanner";
 import { AtlaMark } from "./components/AtlaMark";
 import type { ComposerDraft } from "./components/Composer";
 import { useAppliedTheme } from "./hooks/useAppliedTheme";
+import { usePoppedPanes } from "./hooks/usePoppedPanes";
 
 /** Inert handler for the split pane, which has no draft or page of its own. */
 const noop = () => {};
@@ -37,6 +38,17 @@ export default function App() {
   useEffect(() => attachDashBridge(), []);
 
   useAppliedTheme();
+  // A popped-out pane is shown in its own window, so the main window stops
+  // rendering it -- otherwise there are two of the same browser on screen.
+  const popped = usePoppedPanes();
+
+  // Pages sent from a popped-out browser arrive here, and take exactly the
+  // path a docked browser's would.
+  useEffect(() => {
+    return window.atla?.windows?.onMessage?.((m) => {
+      if (m.kind === "page-to-chat") setPendingPage({ url: m.url, title: m.title, text: m.text });
+    });
+  }, []);
 
   const settings = useStore((s) => s.settings);
   const splitConversationId = useStore((s) => s.splitConversationId);
@@ -116,11 +128,11 @@ export default function App() {
           )}
           {/* The canvas sits between chat and browser: it's a working surface
               for the conversation, not a separate destination like the browser. */}
-          <CanvasPanel />
+          {!popped.includes("canvas") && <CanvasPanel />}
           {/* Stays mounted so the model can drive it even while the panel is hidden. */}
-          <BrowserPanel onSendPageToChat={setPendingPage} />
+          {!popped.includes("browser") && <BrowserPanel onSendPageToChat={setPendingPage} />}
         </div>
-        <TerminalPanel />
+        {!popped.includes("terminal") && <TerminalPanel />}
       </div>
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       {/* Sits above everything: a permission prompt must never be missable. */}

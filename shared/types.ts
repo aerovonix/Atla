@@ -8,6 +8,14 @@ export type { UpdateChannel };
 /** Panes that can be shown in a window of their own. */
 export type PaneKind = "browser" | "terminal" | "canvas";
 
+/** What a popped-out pane can hand back to the main window. */
+export interface PaneMessage {
+  kind: "page-to-chat";
+  url: string;
+  title: string;
+  text: string;
+}
+
 import type { DesktopPolicy, DesktopScope } from "./desktopPolicy.js";
 
 export type ProviderKind =
