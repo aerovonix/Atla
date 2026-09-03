@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   AdblockStats,
   ApprovalRequest,
+  AppSettings,
   AppState,
   ChatStreamEvent,
   ChatStreamRequest,
@@ -80,6 +81,16 @@ const api = {
       return () => ipcRenderer.removeListener("dash:request", listener);
     },
     reply: (id: string, payload: unknown) => ipcRenderer.send(`dash:reply:${id}`, payload)
+  },
+  settings: {
+    get: (): Promise<AppSettings | null> => ipcRenderer.invoke("settings:get"),
+    patch: (patch: Partial<AppSettings>): Promise<AppSettings | null> =>
+      ipcRenderer.invoke("settings:patch", patch),
+    onChanged: (cb: (s: AppSettings) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, s: AppSettings) => cb(s);
+      ipcRenderer.on("settings:changed", listener);
+      return () => ipcRenderer.removeListener("settings:changed", listener);
+    }
   },
   update: {
     state: (): Promise<UpdateState> => ipcRenderer.invoke("update:state"),

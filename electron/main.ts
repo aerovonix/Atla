@@ -7,6 +7,7 @@ import { loadAll, saveState, saveProviders, saveStartupFlags, migrateFromNova } 
 import { streamChat, generateTitle } from "./providers.js";
 import { fetchModels } from "./modelList.js";
 import { adblocker } from "./adblock.js";
+import { initSettings, registerSettingsIpc, withOwnedSettings } from "./sharedSettings.js";
 import { initBrowserBridge } from "./browserBridge.js";
 import { initTerminal, registerTerminalIpc } from "./terminal.js";
 import { registerFileIpc } from "./files.js";
@@ -120,23 +121,22 @@ app.whenReady().then(async () => {
   const all = await loadAll();
   providersCache = all.providers;
 
-  adblocker.setEnabled(all.state.settings.adblockEnabled);
-  adblocker.setCustomRules(all.state.settings.customBlocklist);
-  adblocker.setSpeed(all.state.settings.browserSpeed ?? "normal");
+  // Takes ownership of settings and applies every side effect they imply,
+  // so the adblocker and updater are configured before any window exists.
+  initSettings(all.state.settings);
+  registerSettingsIpc();
   adblocker.attach(BROWSER_PARTITION);
 
   ipcMain.handle("store:load", async () => loadAll());
 
   ipcMain.handle("store:save-state", async (_e, state: AppState) => {
-    adblocker.setEnabled(state.settings.blockTrackers ?? state.settings.adblockEnabled);
-    adblocker.setStripParams(state.settings.stripTrackingParams !== false);
-    adblocker.setLeanWhenHidden(state.settings.leanWhenHidden !== false);
-    adblocker.setSpeed(state.settings.browserSpeed ?? "normal");
-    adblocker.setCustomRules(state.settings.customBlocklist);
-    await saveState(state);
+    // A renderer's settings mirror can be a beat behind; the owned copy wins
+    // so a stale window cannot persist its staleness over the real thing.
+    const owned = withOwnedSettings(state);
+    await saveState(owned);
     // Written alongside, so the next launch can read the GPU decision without
     // touching the (large) state file.
-    await saveStartupFlags(state.settings);
+    await saveStartupFlags(owned.settings);
   });
 
   ipcMain.handle("store:save-providers", async (_e, providers: ProviderConfig[]) => {

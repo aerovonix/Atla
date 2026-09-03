@@ -68,6 +68,11 @@ export interface AtlaBridge {
     onRequest: (cb: (payload: { id: string; request: DashRequest }) => void) => () => void;
     reply: (id: string, payload: unknown) => void;
   };
+  settings: {
+    get: () => Promise<AppSettings | null>;
+    patch: (patch: Partial<AppSettings>) => Promise<AppSettings | null>;
+    onChanged: (cb: (s: AppSettings) => void) => () => void;
+  };
   update: {
     state: () => Promise<UpdateState>;
     check: () => Promise<UpdateState>;

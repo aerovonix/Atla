@@ -145,6 +145,9 @@ function flushDeltas(set: (fn: (s: AtlaStore) => Partial<AtlaStore>) => void) {
   });
 }
 
+/** Cleanup for the cross-window settings subscription, if one is open. */
+let settingsUnsubscribe: (() => void) | null = null;
+
 let saveStateTimer: ReturnType<typeof setTimeout> | null = null;
 function scheduleSaveState(get: () => AtlaStore) {
   if (saveStateTimer) clearTimeout(saveStateTimer);
@@ -570,10 +573,17 @@ export const useStore = create<AtlaStore>((set, get) => {
         systemInfo = null;
       }
 
-      // The updater starts enabled and learns the real preference here, since
-      // main has no view of settings.
-      void window.atla?.update?.setEnabled(settings.autoUpdate);
-      void window.atla?.update?.setChannel(settings.updateChannel);
+      // Main applies the updater and adblocker settings itself now, at the
+      // moment it takes ownership of them, so there is nothing to push here.
+      //
+      // Instead, follow changes made in other windows. Without this a popped
+      // out pane would keep whatever settings it started with while the main
+      // window moved on, and the two would disagree until a restart.
+      settingsUnsubscribe?.();
+      settingsUnsubscribe =
+        window.atla?.settings?.onChanged?.((next) => {
+          set({ settings: next });
+        }) ?? null;
 
       set({
         systemInfo,
@@ -769,9 +779,12 @@ export const useStore = create<AtlaStore>((set, get) => {
     },
 
     updateSettings: (patch) => {
-      if (patch.autoUpdate !== undefined) void window.atla?.update?.setEnabled(patch.autoUpdate);
-      if (patch.updateChannel !== undefined) void window.atla?.update?.setChannel(patch.updateChannel);
+      // Applied locally first so a toggle responds immediately, then handed to
+      // the main process, which owns settings: it runs the side effects and
+      // tells every other window. Waiting for that round trip before showing
+      // the change would make every switch feel sticky.
       set((s) => ({ settings: { ...s.settings, ...patch } }));
+      void window.atla?.settings?.patch(patch);
       scheduleSaveState(get);
     },
 
