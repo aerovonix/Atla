@@ -31,6 +31,7 @@ import {
   ThumbUpIcon,
   ToolIcon
 } from "./icons";
+import { SpeedControl } from "./SpeedControl";
 import { AtlaMark } from "./AtlaMark";
 import { PROVIDER_LABELS } from "../../shared/types";
 import type { ChatAttachment, ChatMessage, ToolEvent } from "../../shared/types";
@@ -922,6 +923,7 @@ export function ChatView({
         >
           <GlobeIcon width={16} height={16} />
         </button>
+        {browserOpen && <SpeedControl />}
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden">

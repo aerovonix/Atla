@@ -2,7 +2,8 @@ import { session, type Session } from "electron";
 import {
   buildIndex,
   decideRequest,
-  modeFor,
+  tierFor,
+  type SpeedTier,
   stripTracking,
   type ResourceKind
 } from "../shared/blocking.js";
@@ -293,6 +294,12 @@ export class Adblocker {
 
   private stripParams = true;
   private leanWhenHidden = true;
+  /** The tier the person picked. Overridden only while the panel is hidden. */
+  private speed: SpeedTier = "normal";
+
+  setSpeed(tier: SpeedTier) {
+    this.speed = tier;
+  }
 
   setStripParams(on: boolean) {
     this.stripParams = on;
@@ -317,11 +324,15 @@ export class Adblocker {
 
     sess.webRequest.onBeforeRequest({ urls: ["http://*/*", "https://*/*"] }, (details, callback) => {
       const kind = details.resourceType as ResourceKind;
-      const mode = modeFor({ panelVisible: this.panelVisible || !this.leanWhenHidden });
+      const tier = tierFor({
+        panelVisible: this.panelVisible,
+        chosen: this.speed,
+        leanWhenHidden: this.leanWhenHidden
+      });
 
       const verdict = decideRequest(TRACKER_INDEX, details.url, kind, {
         blockTrackers: this.enabled,
-        mode
+        tier
       });
 
       if (verdict.block) {

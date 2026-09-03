@@ -22,7 +22,7 @@ import {
   decideRequest,
   hostBlocked,
   hostSuffixes,
-  modeFor,
+  tierFor,
   stripTracking
 } from "../shared/blocking.js";
 import { TRACKER_ALLOW, TRACKER_DOMAINS, TRACKER_PATTERNS } from "../shared/trackers.js";
@@ -1333,8 +1333,9 @@ export async function runSelfTest(): Promise<void> {
 
     console.log("\n[selftest] request blocking");
     const idx = buildIndex(TRACKER_DOMAINS, TRACKER_PATTERNS, TRACKER_ALLOW);
-    const full = { blockTrackers: true, mode: "full" as const };
-    const lean = { blockTrackers: true, mode: "lean" as const };
+    const full = { blockTrackers: true, tier: "normal" as const };
+    const fast = { blockTrackers: true, tier: "fast" as const };
+    const lean = { blockTrackers: true, tier: "lightning" as const };
 
     check("suffixes go longest first", hostSuffixes("a.b.example.com").join(",") === "a.b.example.com,b.example.com,example.com,com");
     // One entry covering every subdomain is the point of suffix matching.
@@ -1367,9 +1368,40 @@ export async function runSelfTest(): Promise<void> {
     check("fonts are dropped when hidden", decideRequest(idx, "https://example.com/a.woff2", "font", lean).block);
     check("video is dropped when hidden", decideRequest(idx, "https://example.com/v.mp4", "media", lean).block);
 
-    check("mode follows the panel", modeFor({ panelVisible: true }) === "full" && modeFor({ panelVisible: false }) === "lean");
-    check("blocking off still kills beacons", decideRequest(idx, "https://x.test/p", "ping", { blockTrackers: false, mode: "full" }).block);
-    check("blocking off lets trackers through", !decideRequest(idx, "https://doubleclick.net/x.js", "script", { blockTrackers: false, mode: "full" }).block);
+    // A hidden panel overrides the choice; an open one always honours it.
+    check("a hidden panel drops to lightning",
+      tierFor({ panelVisible: false, chosen: "normal", leanWhenHidden: true }) === "lightning");
+    check("an open panel keeps the chosen tier",
+      tierFor({ panelVisible: true, chosen: "normal", leanWhenHidden: true }) === "normal" &&
+      tierFor({ panelVisible: true, chosen: "fast", leanWhenHidden: true }) === "fast");
+    check("opting out of lean-when-hidden keeps the choice",
+      tierFor({ panelVisible: false, chosen: "normal", leanWhenHidden: false }) === "normal");
+
+    // Each tier must refuse strictly more than the one below it, or raising
+    // the setting could load *more* of something -- the one thing a speed
+    // control must never do.
+    const KINDS = ["image","font","media","object","subFrame","script","stylesheet","xhr"] as const;
+    const blockedBy = (t: "normal" | "fast" | "lightning") =>
+      new Set(KINDS.filter((k) => decideRequest(idx, "https://plain.test/x", k, { blockTrackers: true, tier: t }).block));
+    const atNormal = blockedBy("normal"), atFast = blockedBy("fast"), atLightning = blockedBy("lightning");
+    check("fast refuses everything normal does",
+      [...atNormal].every((k) => atFast.has(k)), [...atNormal].join(","));
+    check("lightning refuses everything fast does",
+      [...atFast].every((k) => atLightning.has(k)), [...atFast].join(","));
+    check("each tier is strictly heavier-handed",
+      atNormal.size < atFast.size && atFast.size < atLightning.size,
+      `${atNormal.size} < ${atFast.size} < ${atLightning.size}`);
+
+    // The one thing no tier may do: a page with no script has no text on a
+    // client-rendered site, so the fastest tier would serve blank pages.
+    check("scripts survive every tier",
+      !atNormal.has("script") && !atFast.has("script") && !atLightning.has("script"));
+    check("stylesheets survive every tier",
+      !atNormal.has("stylesheet") && !atFast.has("stylesheet") && !atLightning.has("stylesheet"));
+    check("fast keeps images, lightning drops them",
+      !atFast.has("image") && atLightning.has("image"));
+    check("blocking off still kills beacons", decideRequest(idx, "https://x.test/p", "ping", { blockTrackers: false, tier: "normal" as const }).block);
+    check("blocking off lets trackers through", !decideRequest(idx, "https://doubleclick.net/x.js", "script", { blockTrackers: false, tier: "normal" as const }).block);
     // A malformed URL is the network layer's problem, not a reason to block.
     check("an unparseable url is not blocked", !decideRequest(idx, "notaurl", "script", full).block);
 

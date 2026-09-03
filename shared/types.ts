@@ -1,6 +1,8 @@
 // Shared between the Electron main process and the renderer (React) code.
 
 import type { UpdateChannel } from "./channels.js";
+import type { SpeedTier } from "./blocking.js";
+export type { SpeedTier };
 export type { UpdateChannel };
 
 import type { DesktopPolicy, DesktopScope } from "./desktopPolicy.js";
@@ -255,6 +257,11 @@ export interface AppSettings {
   // Browser
   adblockEnabled: boolean;
   browserHomepage: string;
+  /**
+   * How much of a page to load when the panel is open. Normal is the full
+   * experience; lightning is text-only. See shared/blocking.ts.
+   */
+  browserSpeed: SpeedTier;
   searchEngineUrl: string;
   customBlocklist: string;
 }
@@ -273,6 +280,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // an instruction to use it every turn. It decides per message.
   webSearchEnabled: true,
   browserToolsEnabled: true,
+  browserSpeed: "normal",
   terminalToolEnabled: true,
   // Running a shell command is the one tool whose effects can't be taken back,
   // so the gate stays on unless the user deliberately removes it.

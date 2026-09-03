@@ -122,6 +122,7 @@ app.whenReady().then(async () => {
 
   adblocker.setEnabled(all.state.settings.adblockEnabled);
   adblocker.setCustomRules(all.state.settings.customBlocklist);
+  adblocker.setSpeed(all.state.settings.browserSpeed ?? "normal");
   adblocker.attach(BROWSER_PARTITION);
 
   ipcMain.handle("store:load", async () => loadAll());
@@ -130,6 +131,7 @@ app.whenReady().then(async () => {
     adblocker.setEnabled(state.settings.blockTrackers ?? state.settings.adblockEnabled);
     adblocker.setStripParams(state.settings.stripTrackingParams !== false);
     adblocker.setLeanWhenHidden(state.settings.leanWhenHidden !== false);
+    adblocker.setSpeed(state.settings.browserSpeed ?? "normal");
     adblocker.setCustomRules(state.settings.customBlocklist);
     await saveState(state);
     // Written alongside, so the next launch can read the GPU decision without

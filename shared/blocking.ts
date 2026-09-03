@@ -39,16 +39,37 @@ export type ResourceKind =
 /**
  * How much of a page to load.
  *
- * - `full`: everything except trackers. Layout, images and fonts intact —
+ * Three tiers, each refusing strictly more than the last, so raising the
+ * setting can never load *more* of something than the tier below.
+ *
+ * - `normal`: everything except trackers. Layout, images and fonts intact —
  *   what someone actually looking at the page should get.
- * - `lean`: also drops images, media and fonts. Stylesheets and scripts stay,
- *   so the DOM still builds and client-rendered text still appears; it just
- *   looks wrong, which is fine when nobody is watching.
+ * - `fast`: also drops webfonts, video, embeds and subframes. Text reflows
+ *   into a fallback face and ad slots collapse, but the page is recognisably
+ *   itself and images still load.
+ * - `lightning`: also drops images. What is left is text, layout and
+ *   behaviour — a reader view assembled by refusing bytes rather than by
+ *   rewriting the page.
+ *
+ * Scripts and stylesheets survive every tier, deliberately. Blocking scripts
+ * would be the single biggest saving and it is the one thing we will not do:
+ * a client-rendered page with no scripts has no text either, so the fastest
+ * tier would reliably produce blank pages on exactly the sites people most
+ * want read quickly.
  */
-export type LoadMode = "full" | "lean";
+export type SpeedTier = "normal" | "fast" | "lightning";
 
-/** Weight with no bearing on text. Dropped only when the panel is hidden. */
-const HEAVY: ReadonlySet<ResourceKind> = new Set(["image", "font", "media", "object"]);
+/**
+ * What each tier refuses, over and above trackers.
+ *
+ * Written out per tier rather than composed, so reading one line tells you
+ * everything that tier drops.
+ */
+const TIER_BLOCKS: Readonly<Record<SpeedTier, ReadonlySet<ResourceKind>>> = {
+  normal: new Set<ResourceKind>(),
+  fast: new Set<ResourceKind>(["font", "media", "object", "subFrame"]),
+  lightning: new Set<ResourceKind>(["font", "media", "object", "subFrame", "image"])
+};
 
 /**
  * Pure telemetry. `ping` is hyperlink auditing, `cspReport` is a report-only
@@ -182,11 +203,11 @@ export function decideRequest(
   index: BlockIndex,
   url: string,
   kind: ResourceKind,
-  opts: { blockTrackers: boolean; mode: LoadMode }
+  opts: { blockTrackers: boolean; tier: SpeedTier }
 ): BlockDecision {
   if (kind === "mainFrame") return { block: false, reason: null };
   if (ALWAYS_DEAD.has(kind)) return { block: true, reason: "beacon" };
-  if (opts.mode === "lean" && HEAVY.has(kind)) return { block: true, reason: "weight" };
+  if (TIER_BLOCKS[opts.tier].has(kind)) return { block: true, reason: "weight" };
   if (!opts.blockTrackers) return { block: false, reason: null };
 
   let host: string;
@@ -205,14 +226,19 @@ export function decideRequest(
 }
 
 /**
- * Which mode applies right now.
+ * The tier actually in force right now.
  *
- * The whole idea: when the panel is closed, the model is driving and nobody is
- * looking at the page. Downloading images and webfonts to render into a hidden
- * view is pure waste. When the panel is open, the page is for a person, so it
- * loads properly — the fast path never degrades what someone is actually
- * looking at.
+ * A hidden panel overrides the choice and drops to `lightning`: the model is
+ * driving, nobody is looking, and fetching images and webfonts to render into
+ * a view no one can see is pure waste. When the panel is open the person's own
+ * choice always wins, so the fast path never quietly degrades what someone is
+ * actually looking at.
  */
-export function modeFor(opts: { panelVisible: boolean }): LoadMode {
-  return opts.panelVisible ? "full" : "lean";
+export function tierFor(opts: {
+  panelVisible: boolean;
+  chosen: SpeedTier;
+  leanWhenHidden: boolean;
+}): SpeedTier {
+  if (!opts.panelVisible && opts.leanWhenHidden) return "lightning";
+  return opts.chosen;
 }

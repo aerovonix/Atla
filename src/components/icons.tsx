@@ -146,6 +146,13 @@ export const GlobeIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+/** Speed tiers: a bolt, filled in progressively by the caller's colour. */
+export const BoltIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z" />
+  </svg>
+);
+
 export const ShieldIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
     <path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" />
