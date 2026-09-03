@@ -47,15 +47,19 @@ export type ResourceKind =
  * - `fast`: also drops webfonts, video, embeds and subframes. Text reflows
  *   into a fallback face and ad slots collapse, but the page is recognisably
  *   itself and images still load.
- * - `lightning`: also drops images. What is left is text, layout and
- *   behaviour — a reader view assembled by refusing bytes rather than by
+ * - `lightning`: also drops images and scripts. What is left is text and
+ *   layout — a reader view assembled by refusing bytes rather than by
  *   rewriting the page.
  *
- * Scripts and stylesheets survive every tier, deliberately. Blocking scripts
- * would be the single biggest saving and it is the one thing we will not do:
- * a client-rendered page with no scripts has no text either, so the fastest
- * tier would reliably produce blank pages on exactly the sites people most
- * want read quickly.
+ * Blocking scripts is the largest saving available and also the most
+ * destructive: a client-rendered page without them has no text either, so
+ * lightning will render some sites completely blank. That is survivable only
+ * because it is detectable — the panel measures the rendered text after load
+ * and offers to re-run the page with scripts, per host. Without that escape
+ * hatch this tier would be a trap.
+ *
+ * Stylesheets survive every tier. They are cheap and dropping them makes text
+ * unreadable rather than merely plain.
  */
 export type SpeedTier = "normal" | "fast" | "lightning";
 
@@ -68,7 +72,7 @@ export type SpeedTier = "normal" | "fast" | "lightning";
 const TIER_BLOCKS: Readonly<Record<SpeedTier, ReadonlySet<ResourceKind>>> = {
   normal: new Set<ResourceKind>(),
   fast: new Set<ResourceKind>(["font", "media", "object", "subFrame"]),
-  lightning: new Set<ResourceKind>(["font", "media", "object", "subFrame", "image"])
+  lightning: new Set<ResourceKind>(["font", "media", "object", "subFrame", "image", "script"])
 };
 
 /**
@@ -203,11 +207,25 @@ export function decideRequest(
   index: BlockIndex,
   url: string,
   kind: ResourceKind,
-  opts: { blockTrackers: boolean; tier: SpeedTier }
+  opts: {
+    blockTrackers: boolean;
+    tier: SpeedTier;
+    /**
+     * Set once someone has asked for scripts on this host. Overrides the tier
+     * for scripts alone — the rest of lightning still applies, so a page
+     * rescued this way stays light apart from the thing that made it blank.
+     */
+    scriptsAllowed?: boolean;
+  }
 ): BlockDecision {
   if (kind === "mainFrame") return { block: false, reason: null };
   if (ALWAYS_DEAD.has(kind)) return { block: true, reason: "beacon" };
-  if (TIER_BLOCKS[opts.tier].has(kind)) return { block: true, reason: "weight" };
+  if (kind === "script" && opts.scriptsAllowed) {
+    // Fall through to tracker checks: rescuing a page's own scripts is not a
+    // reason to start loading its analytics.
+  } else if (TIER_BLOCKS[opts.tier].has(kind)) {
+    return { block: true, reason: "weight" };
+  }
   if (!opts.blockTrackers) return { block: false, reason: null };
 
   let host: string;

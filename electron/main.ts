@@ -192,6 +192,12 @@ app.whenReady().then(async () => {
   // images, fonts and video are never fetched.
   ipcMain.on("browser:visible", (_e, visible: boolean) => adblocker.setPanelVisible(Boolean(visible)));
   ipcMain.handle("browser:partition", () => BROWSER_PARTITION);
+  // Rescues a page that lightning rendered blank. Scoped to one host and to
+  // this run only -- see AdBlocker.allowScripts.
+  ipcMain.handle("browser:allow-scripts", (_e, host: string) => {
+    adblocker.allowScripts(String(host ?? ""));
+    return true;
+  });
 
   ipcMain.on("chat:start", async (event, req: ChatStreamRequest) => {
     const sender = event.sender;

@@ -3,6 +3,7 @@ import {
   buildIndex,
   decideRequest,
   tierFor,
+  hostSuffixes,
   type SpeedTier,
   stripTracking,
   type ResourceKind
@@ -301,6 +302,24 @@ export class Adblocker {
     this.speed = tier;
   }
 
+  /**
+   * Hosts someone has asked to run scripts on, despite lightning.
+   *
+   * Session-scoped rather than saved: the grant exists to rescue a page that
+   * came up blank, and quietly carrying it across restarts would slowly turn
+   * lightning back into fast without anyone deciding to.
+   */
+  private scriptHosts = new Set<string>();
+
+  allowScripts(host: string) {
+    const clean = host.toLowerCase().replace(/^\.+|\.+$/g, "");
+    if (clean) this.scriptHosts.add(clean);
+  }
+
+  scriptsAllowedFor(host: string): boolean {
+    return hostSuffixes(host).some((h) => this.scriptHosts.has(h));
+  }
+
   setStripParams(on: boolean) {
     this.stripParams = on;
   }
@@ -330,9 +349,19 @@ export class Adblocker {
         leanWhenHidden: this.leanWhenHidden
       });
 
+      let scriptsAllowed = false;
+      if (kind === "script" && this.scriptHosts.size) {
+        try {
+          scriptsAllowed = this.scriptsAllowedFor(new URL(details.url).hostname);
+        } catch {
+          scriptsAllowed = false;
+        }
+      }
+
       const verdict = decideRequest(TRACKER_INDEX, details.url, kind, {
         blockTrackers: this.enabled,
-        tier
+        tier,
+        scriptsAllowed
       });
 
       if (verdict.block) {

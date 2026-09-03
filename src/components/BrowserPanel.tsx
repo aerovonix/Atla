@@ -112,6 +112,14 @@ export function BrowserPanel({ onSendPageToChat }: { onSendPageToChat: (info: { 
     webviewRef.current = activeTab === "main" ? mainRef.current : extraRefs.current.get(activeTab) ?? null;
   }, [activeTab, tabIds]);
   const [partition, setPartition] = useState<string | null>(null);
+  /** Host whose page came back empty under lightning, if any. */
+  const [blankHost, setBlankHost] = useState<string | null>(null);
+  const speed = useStore((st) => st.settings.browserSpeed);
+  // Read inside a listener that outlives the render it was created in.
+  const speedRef = useRef(speed);
+  useEffect(() => {
+    speedRef.current = speed;
+  }, [speed]);
   /** src for a tab that has been asked for but not yet mounted. */
   const pendingSrc = useRef<Map<string, string>>(new Map());
   const [address, setAddress] = useState("");
@@ -289,6 +297,34 @@ export function BrowserPanel({ onSendPageToChat }: { onSendPageToChat: (info: { 
     const wv = webviewRef.current;
     if (!wv || !partition) return;
 
+    /**
+     * Lightning blocks scripts, which renders some sites completely blank.
+     * Rather than let that look like a broken browser, measure what actually
+     * came out and offer the page its scripts back.
+     *
+     * Only the rendered text is measured, because that is the thing the
+     * person came for. A page can be visually busy and still have nothing to
+     * read, and it is the nothing-to-read case that needs rescuing.
+     */
+    const checkForBlankPage = async (view: WebviewElement) => {
+      if (speedRef.current !== "lightning") return setBlankHost(null);
+      try {
+        const url = view.getURL();
+        if (!/^https?:/.test(url)) return setBlankHost(null);
+        const raw = await view.executeJavaScript(
+          "(document.body && document.body.innerText || '').trim().length"
+        );
+        const len = typeof raw === "number" ? raw : Number(raw);
+        if (!Number.isFinite(len)) return setBlankHost(null);
+        // Short enough that there is plainly nothing to read. Cookie notices
+        // and "enable JavaScript" messages land well under this.
+        setBlankHost(len < 200 ? new URL(url).hostname : null);
+      } catch {
+        // A page that refuses inspection is not evidence of blankness.
+        setBlankHost(null);
+      }
+    };
+
     const syncNav = () => {
       try {
         setNav({ back: wv.canGoBack(), forward: wv.canGoForward() });
@@ -300,7 +336,10 @@ export function BrowserPanel({ onSendPageToChat }: { onSendPageToChat: (info: { 
       setReady(true);
       syncNav();
     };
-    const onStart = () => setLoading(true);
+    const onStart = () => {
+      setLoading(true);
+      setBlankHost(null);
+    };
     const onStop = () => {
       setLoading(false);
       try {
@@ -311,6 +350,7 @@ export function BrowserPanel({ onSendPageToChat }: { onSendPageToChat: (info: { 
       }
       syncNav();
       void window.atla.browser.stats().then((s) => setBlocked(s.blocked));
+      void checkForBlankPage(wv);
     };
     wv.addEventListener("dom-ready", onDomReady);
     wv.addEventListener("did-start-loading", onStart);
@@ -386,6 +426,29 @@ export function BrowserPanel({ onSendPageToChat }: { onSendPageToChat: (info: { 
       </div>
 
       <div className="flex-1 min-h-0 relative bg-white" style={{ width: PANEL_WIDTH }}>
+        {blankHost && (
+          <div
+            className="absolute inset-x-0 top-0 z-20 px-3 py-2 flex items-center gap-3 secret-reveal"
+            style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}
+          >
+            <div className="flex-1 min-w-0">
+              <div className="text-[12px] font-medium">This page needs scripts to show anything</div>
+              <div className="text-[11px] text-secondary truncate">
+                Lightning blocked them. {blankHost} will stay light otherwise.
+              </div>
+            </div>
+            <button
+              onClick={async () => {
+                await window.atla.browser.allowScripts(blankHost);
+                setBlankHost(null);
+                webviewRef.current?.reload();
+              }}
+              className="shrink-0 text-[12px] px-3 py-1.5 rounded-full border border-border hover:bg-hover transition-colors"
+            >
+              Load scripts
+            </button>
+          </div>
+        )}
         {/* <webview> is an Electron built-in; typed in global.d.ts */}
         {tabIds.map((id) => (
           <webview

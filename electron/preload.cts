@@ -43,6 +43,7 @@ const api = {
   },
   browser: {
     partition: (): Promise<string> => ipcRenderer.invoke("browser:partition"),
+    allowScripts: (host: string): Promise<boolean> => ipcRenderer.invoke("browser:allow-scripts", host),
     stats: (): Promise<AdblockStats> => ipcRenderer.invoke("browser:stats"),
     /**
      * The main process drives the <webview> through here: it sends a command,

@@ -1361,7 +1361,9 @@ export async function runSelfTest(): Promise<void> {
     check("images load when the panel is open", !decideRequest(idx, "https://example.com/a.jpg", "image", full).block);
     check("fonts load when the panel is open", !decideRequest(idx, "https://example.com/a.woff2", "font", full).block);
     check("stylesheets always load", !decideRequest(idx, "https://example.com/a.css", "stylesheet", lean).block);
-    check("scripts always load", !decideRequest(idx, "https://example.com/a.js", "script", lean).block);
+    // Scripts load everywhere except lightning, which is covered below along
+    // with the escape hatch that makes dropping them survivable.
+    check("scripts load below lightning", !decideRequest(idx, "https://example.com/a.js", "script", fast).block);
 
     // ...and dropped when it isn't.
     check("images are dropped when hidden", decideRequest(idx, "https://example.com/a.jpg", "image", lean).reason === "weight");
@@ -1394,8 +1396,20 @@ export async function runSelfTest(): Promise<void> {
 
     // The one thing no tier may do: a page with no script has no text on a
     // client-rendered site, so the fastest tier would serve blank pages.
-    check("scripts survive every tier",
-      !atNormal.has("script") && !atFast.has("script") && !atLightning.has("script"));
+    check("scripts survive normal and fast",
+      !atNormal.has("script") && !atFast.has("script"));
+    // Lightning drops scripts, which is why the escape hatch has to exist.
+    check("lightning drops scripts", atLightning.has("script"));
+    check("a granted host gets its scripts back",
+      !decideRequest(idx, "https://plain.test/app.js", "script",
+        { blockTrackers: true, tier: "lightning" as const, scriptsAllowed: true }).block);
+    // Rescuing a page is not a reason to start loading its analytics.
+    check("a granted host still loses its trackers",
+      decideRequest(idx, "https://google-analytics.com/ga.js", "script",
+        { blockTrackers: true, tier: "lightning" as const, scriptsAllowed: true }).reason === "tracker");
+    check("granting scripts does not bring back images",
+      decideRequest(idx, "https://plain.test/a.jpg", "image",
+        { blockTrackers: true, tier: "lightning" as const, scriptsAllowed: true }).block);
     check("stylesheets survive every tier",
       !atNormal.has("stylesheet") && !atFast.has("stylesheet") && !atLightning.has("stylesheet"));
     check("fast keeps images, lightning drops them",
