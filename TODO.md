@@ -69,7 +69,9 @@ Everything here is written and runs on Windows, but has never executed on macOS.
 - [ ] Startup check that names any missing macOS permission in one place, rather than each surfacing as a different confusing error later.
 - [ ] No syntax highlighting in code blocks.
 - [ ] No token or cost counters — relevant now that the review pass can double the calls per message.
-- [ ] Adblock list is a compact built-in set (~150 patterns), not full EasyList.
+- [ ] Adblock list is a curated built-in set (218 domains plus 24 path
+      patterns), not full EasyList. Held to the rule that nothing in it may
+      break a page, which a generated list cannot promise.
 - [ ] The message queue lives in memory; quitting mid-queue loses anything waiting.
 
 ## Deliberately not doing
@@ -103,11 +105,9 @@ build is the part that is unambiguously ours.
       ships. Still worth a vite 5 → 7 bump eventually, but not a blocker.
 - [x] electron-builder 26 produces a working installer; installed over 0.6.1
       in place, user data preserved, app launches
-- [ ] Exercise the browser panel properly: tabs, navigation, tracker
-      blocking, the lean/full mode switch. Speedometer exercised rendering
-      but none of the panel's own machinery.
-- [ ] Exercise desktop capture — `desktopCapturer` and the macOS permission
-      probes typecheck, but their behaviour is unverified
+Re-verification of the panel and of desktop capture is tracked once, under
+Sandbox exit criteria above, rather than again here.
+
 - [ ] Confirm the update feed and asset names still agree once a prerelease
       is actually published to GitHub
 - [ ] Re-check that `latest.yml` is what a published prerelease serves, now
