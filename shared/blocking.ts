@@ -260,3 +260,34 @@ export function tierFor(opts: {
   if (!opts.panelVisible && opts.leanWhenHidden) return "lightning";
   return opts.chosen;
 }
+
+/**
+ * The shortest page worth treating as real.
+ *
+ * Measured rather than chosen. With scripts stripped, pages that have
+ * something to say run to thousands of characters — Hacker News 3,880,
+ * react.dev 7,996, Wikipedia 22,436 — while example.com, a legitimate page
+ * with nothing much on it, comes to 142. A React shell with its scripts
+ * refused says "You need to enable JavaScript to run this app" in 45.
+ *
+ * So the interesting boundary sits between 45 and 142, and this sits in it.
+ * An earlier version guessed 200, which is above example.com, and fired on
+ * pages that were perfectly fine.
+ */
+export const BLANK_PAGE_LIMIT = 100;
+
+/**
+ * Whether to offer a blank-looking page its scripts back.
+ *
+ * Length alone is not evidence — short pages exist. The offer is only honest
+ * when we know we caused it, which is what `scriptsRefused` establishes.
+ */
+export function shouldOfferScripts(opts: {
+  tier: SpeedTier;
+  scriptsRefused: number;
+  textLength: number;
+}): boolean {
+  if (opts.tier !== "lightning") return false;
+  if (opts.scriptsRefused <= 0) return false;
+  return opts.textLength < BLANK_PAGE_LIMIT;
+}

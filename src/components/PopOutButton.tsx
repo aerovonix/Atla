@@ -1,4 +1,5 @@
 import type { PaneKind } from "../../shared/types";
+import { isPoppedWindow } from "../paneContext";
 
 /** Arrow leaving a frame — the usual shorthand for "open in its own window". */
 function PopOutIcon() {
@@ -21,8 +22,7 @@ function PopOutIcon() {
  * harmless — but an inert button is still a button that lies.
  */
 export function PopOutButton({ pane }: { pane: PaneKind }) {
-  const isPopped = new URLSearchParams(window.location.search).has("pane");
-  if (isPopped) return null;
+  if (isPoppedWindow()) return null;
 
   return (
     <button

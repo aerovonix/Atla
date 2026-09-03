@@ -200,6 +200,9 @@ app.whenReady().then(async () => {
   ipcMain.handle("browser:partition", () => BROWSER_PARTITION);
   // Rescues a page that lightning rendered blank. Scoped to one host and to
   // this run only -- see AdBlocker.allowScripts.
+  ipcMain.handle("browser:scripts-blocked", (_e, host: string) =>
+    adblocker.scriptsBlockedFor(String(host ?? ""))
+  );
   ipcMain.handle("browser:allow-scripts", (_e, host: string) => {
     adblocker.allowScripts(String(host ?? ""));
     return true;

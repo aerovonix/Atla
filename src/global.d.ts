@@ -41,6 +41,7 @@ export interface AtlaBridge {
   browser: {
     partition: () => Promise<string>;
     allowScripts: (host: string) => Promise<boolean>;
+    scriptsBlocked: (host: string) => Promise<number>;
     stats: () => Promise<AdblockStats>;
     onRpcRequest: (handler: (req: BrowserRpcRequest) => void) => () => void;
     respond: (payload: { id: string; ok: boolean; result?: unknown; error?: string }) => void;

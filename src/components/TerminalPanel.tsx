@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { PopOutButton } from "./PopOutButton";
+import { isPoppedWindow } from "../paneContext";
 import { useTerminalStore } from "../state/terminalStore";
 import { CloseIcon, StopIcon, TrashIcon } from "./icons";
 
@@ -86,7 +87,12 @@ export function TerminalPanel() {
   };
 
   return (
-    <div className="h-[280px] shrink-0 flex flex-col border-t border-border bg-bg">
+    <div
+      className={`flex flex-col border-t border-border bg-bg ${
+        // Popped, the window is the terminal; docked, it is a strip under the chat.
+        isPoppedWindow() ? "flex-1 w-full min-h-0" : "h-[280px] shrink-0"
+      }`}
+    >
       <div className="h-9 shrink-0 flex items-center gap-2 px-3 border-b border-borderLight">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-secondary">Terminal</span>
         <span className="font-mono text-[11px] text-secondary truncate" title={cwd}>

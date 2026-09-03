@@ -23,6 +23,8 @@ import {
   hostBlocked,
   hostSuffixes,
   tierFor,
+  shouldOfferScripts,
+  BLANK_PAGE_LIMIT,
   stripTracking
 } from "../shared/blocking.js";
 import { TRACKER_ALLOW, TRACKER_DOMAINS, TRACKER_PATTERNS } from "../shared/trackers.js";
@@ -1261,6 +1263,30 @@ export async function runSelfTest(): Promise<void> {
     check("the port is closed after stopping", !reachable);
 
     check("lanAddresses returns strings", lanAddresses().every((a) => typeof a === "string"));
+
+    console.log("\n[selftest] blank page detection");
+    // Fixtures are real measurements: raw HTML with script/style stripped,
+    // which is roughly what a scripts-blocked render puts on screen.
+    const PAGES: [string, number][] = [
+      ["mdn", 30155], ["wikipedia", 22436], ["bbc", 9689],
+      ["react.dev", 7996], ["hacker news", 3880], ["example.com", 142]
+    ];
+    for (const [name, textLength] of PAGES) {
+      check(`${name} is never called blank`,
+        !shouldOfferScripts({ tier: "lightning", scriptsRefused: 5, textLength }), String(textLength));
+    }
+    // The case the whole thing exists for: a shell whose scripts we refused.
+    check("a stripped app shell is offered its scripts",
+      shouldOfferScripts({ tier: "lightning", scriptsRefused: 3, textLength: 45 }));
+    // Short is not enough on its own -- we must know we caused it.
+    check("a short page we did not strip is left alone",
+      !shouldOfferScripts({ tier: "lightning", scriptsRefused: 0, textLength: 12 }));
+    check("the offer never appears below lightning",
+      !shouldOfferScripts({ tier: "fast", scriptsRefused: 9, textLength: 0 }) &&
+      !shouldOfferScripts({ tier: "normal", scriptsRefused: 9, textLength: 0 }));
+    // The limit has to sit in the gap the measurements found, or it is guesswork again.
+    check("the limit sits between a stripped shell and the smallest real page",
+      BLANK_PAGE_LIMIT > 45 && BLANK_PAGE_LIMIT < 142, String(BLANK_PAGE_LIMIT));
 
     console.log("\n[selftest] pop-out windows");
     // Real BrowserWindows, created and destroyed. They flash on screen during

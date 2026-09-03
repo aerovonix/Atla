@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PopOutButton } from "./PopOutButton";
+import { isPoppedWindow } from "../paneContext";
 import { isDirty, useCanvasStore, type CanvasTab } from "../state/canvasStore";
 import { CloseIcon, FileIcon } from "./icons";
 
@@ -96,7 +97,11 @@ export function CanvasPanel() {
   const dirty = tab ? isDirty(tab) : false;
 
   return (
-    <div className="w-[46%] min-w-[380px] max-w-[900px] shrink-0 border-l border-border flex flex-col min-h-0 bg-bg">
+    <div
+      className={`border-l border-border flex flex-col min-h-0 bg-bg ${
+        isPoppedWindow() ? "flex-1 w-full" : "w-[46%] min-w-[380px] max-w-[900px] shrink-0"
+      }`}
+    >
       <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border overflow-x-auto">
         <span className="shrink-0 text-secondary px-1">
           <FileIcon width={13} height={13} />

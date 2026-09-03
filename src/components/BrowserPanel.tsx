@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useStore } from "../state/store";
 import { PopOutButton } from "./PopOutButton";
+import { isPoppedWindow } from "../paneContext";
+import { shouldOfferScripts } from "../../shared/blocking";
 import { useBrowserStore } from "../state/browserStore";
 import { CloseIcon, ShieldIcon, ArrowLeftIcon, ArrowRightIcon, RegenerateIcon, HomeIcon, SendIcon } from "./icons";
 
@@ -300,26 +302,49 @@ export function BrowserPanel({ onSendPageToChat }: { onSendPageToChat: (info: { 
 
     /**
      * Lightning blocks scripts, which renders some sites completely blank.
-     * Rather than let that look like a broken browser, measure what actually
-     * came out and offer the page its scripts back.
+     * Rather than let that look like a broken browser, offer the page its
+     * scripts back — but only when it really is our doing.
      *
-     * Only the rendered text is measured, because that is the thing the
-     * person came for. A page can be visually busy and still have nothing to
-     * read, and it is the nothing-to-read case that needs rescuing.
+     * Two conditions, because either alone gets it wrong. A short page is not
+     * evidence: example.com is a perfectly good page with 142 characters,
+     * while a stripped React shell says "You need to enable JavaScript to run
+     * this app" in 45. An earlier version tested length alone at 200 and fired
+     * on nearly everything, which is how a helpful prompt becomes noise.
+     *
+     * So: we must actually have refused a script for this host, *and* what
+     * came out must be shorter than the smallest page worth reading.
      */
+    const measureText = async (view: WebviewElement): Promise<number> => {
+      // innerText needs layout, and returns "" for a view that has not been
+      // laid out -- which would read as "blank" for every background tab.
+      // textContent needs no layout, so it is the fallback rather than the
+      // first choice: it would otherwise count markup the reader never sees.
+      const raw = await view.executeJavaScript(`(() => {
+        const b = document.body;
+        if (!b) return 0;
+        const shown = (b.innerText || "").trim();
+        if (shown.length) return shown.length;
+        const copy = b.cloneNode(true);
+        copy.querySelectorAll("script,style,noscript,template").forEach((n) => n.remove());
+        return (copy.textContent || "").trim().length;
+      })()`);
+      const len = typeof raw === "number" ? raw : Number(raw);
+      return Number.isFinite(len) ? len : Number.POSITIVE_INFINITY;
+    };
+
     const checkForBlankPage = async (view: WebviewElement) => {
       if (speedRef.current !== "lightning") return setBlankHost(null);
       try {
         const url = view.getURL();
         if (!/^https?:/.test(url)) return setBlankHost(null);
-        const raw = await view.executeJavaScript(
-          "(document.body && document.body.innerText || '').trim().length"
-        );
-        const len = typeof raw === "number" ? raw : Number(raw);
-        if (!Number.isFinite(len)) return setBlankHost(null);
-        // Short enough that there is plainly nothing to read. Cookie notices
-        // and "enable JavaScript" messages land well under this.
-        setBlankHost(len < 200 ? new URL(url).hostname : null);
+        const host = new URL(url).hostname;
+
+        const refused = await window.atla.browser.scriptsBlocked(host);
+        if (!refused) return setBlankHost(null);
+
+        const textLength = await measureText(view);
+        const offer = shouldOfferScripts({ tier: "lightning", scriptsRefused: refused, textLength });
+        setBlankHost(offer ? host : null);
       } catch {
         // A page that refuses inspection is not evidence of blankness.
         setBlankHost(null);
@@ -366,7 +391,10 @@ export function BrowserPanel({ onSendPageToChat }: { onSendPageToChat: (info: { 
   if (!partition) return null;
 
   const wv = webviewRef.current;
-  const PANEL_WIDTH = 520;
+  // Docked, the panel is a fixed slice of the main window. Popped, the window
+  // is the panel, so it has to follow the window's size instead.
+  const popped = isPoppedWindow();
+  const PANEL_WIDTH: number | string = popped ? "100%" : 520;
 
   return (
     // The webview must stay attached to the DOM to work, so when the panel is
@@ -374,8 +402,8 @@ export function BrowserPanel({ onSendPageToChat }: { onSendPageToChat: (info: { 
     // or display:none-ing it — otherwise the model couldn't browse in the
     // background and every command would fail with "not attached".
     <div
-      className="h-full flex flex-col border-l border-border bg-bg overflow-hidden shrink-0"
-      style={{ width: open ? PANEL_WIDTH : 0, borderLeftWidth: open ? 1 : 0 }}
+      className={`h-full flex flex-col border-l border-border bg-bg overflow-hidden ${popped ? "flex-1 min-w-0" : "shrink-0"}`}
+      style={{ width: open ? PANEL_WIDTH : 0, borderLeftWidth: open && !popped ? 1 : 0 }}
     >
       <div className="h-[52px] shrink-0 flex items-center gap-1.5 px-2 border-b border-borderLight" style={{ width: PANEL_WIDTH }}>
         <button

@@ -312,6 +312,9 @@ export class Adblocker {
   private scriptHosts = new Set<string>();
 
   allowScripts(host: string) {
+    // The count exists to justify offering the prompt; once the offer is
+    // taken it has done its job and would otherwise keep the prompt armed.
+    this.scriptBlocks.delete(host.toLowerCase());
     const clean = host.toLowerCase().replace(/^\.+|\.+$/g, "");
     if (clean) this.scriptHosts.add(clean);
   }
@@ -326,6 +329,19 @@ export class Adblocker {
 
   setLeanWhenHidden(on: boolean) {
     this.leanWhenHidden = on;
+  }
+
+  /**
+   * Scripts refused per host, so the panel can tell "this page is empty
+   * because we emptied it" from "this page is just short". Without it the
+   * blank-page prompt is guesswork against a text length.
+   */
+  private scriptBlocks = new Map<string, number>();
+
+  scriptsBlockedFor(host: string): number {
+    let total = 0;
+    for (const h of hostSuffixes(host)) total += this.scriptBlocks.get(h) ?? 0;
+    return total;
   }
 
   /** Bytes never fetched because the panel was hidden. */
@@ -366,6 +382,14 @@ export class Adblocker {
 
       if (verdict.block) {
         if (verdict.reason === "weight") this.weightSaved++;
+        if (kind === "script" && verdict.reason === "weight") {
+          try {
+            const h = new URL(details.url).hostname.toLowerCase();
+            this.scriptBlocks.set(h, (this.scriptBlocks.get(h) ?? 0) + 1);
+          } catch {
+            /* unparseable url, nothing to attribute it to */
+          }
+        }
         else this.blockedCount++;
         callback({ cancel: true });
         return;
