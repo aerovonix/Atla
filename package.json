@@ -36,6 +36,7 @@
   "dependencies": {
     "electron-updater": "^6.8.9",
     "nanoid": "^5.0.7",
+    "node-pty": "^1.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.1",
@@ -126,6 +127,10 @@
         "owner": "aerovonix",
         "repo": "Atla"
       }
+    ],
+    "npmRebuild": false,
+    "asarUnpack": [
+      "**/node_modules/node-pty/**"
     ]
   },
   "license": "CC-BY-NC-SA-4.0",
