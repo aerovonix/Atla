@@ -9,6 +9,7 @@ import { fetchModels } from "./modelList.js";
 import { adblocker } from "./adblock.js";
 import { initSettings, registerSettingsIpc, withOwnedSettings } from "./sharedSettings.js";
 import { closeAllPopouts, registerWindowIpc } from "./windows.js";
+import { registerPtyIpc, killAll as killAllPtys } from "./pty.js";
 import { initBrowserBridge } from "./browserBridge.js";
 import { initTerminal, registerTerminalIpc } from "./terminal.js";
 import { registerFileIpc } from "./files.js";
@@ -131,6 +132,7 @@ app.whenReady().then(async () => {
   initSettings(all.state.settings);
   registerSettingsIpc();
   registerWindowIpc(isDev, () => mainWindow);
+  registerPtyIpc();
   adblocker.attach(BROWSER_PARTITION);
 
   ipcMain.handle("store:load", async () => loadAll());
@@ -305,3 +307,8 @@ app.whenReady().then(async () => {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
+
+// Shells are children of this process, not of any window. Without this they
+// survive the app on POSIX and linger as orphans -- the same class of bug the
+// terminal's process-group kill exists to prevent.
+app.on("will-quit", () => killAllPtys());

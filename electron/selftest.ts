@@ -31,6 +31,7 @@ import { TRACKER_ALLOW, TRACKER_DOMAINS, TRACKER_PATTERNS } from "../shared/trac
 import { splitStreaming } from "../shared/streamSplit.js";
 import { acceptsVersion, prereleaseId, describeVersion } from "../shared/channels.js";
 import { popOutPane, poppedPanes, closeAllPopouts } from "./windows.js";
+import { createSession, write as ptyWrite, resize as ptyResize, killSession, listSessions, scrollbackFor, ptyUnavailableReason } from "./pty.js";
 import { unifiedDiff, diffStat } from "../shared/diff.js";
 import { buildEnvironmentPrompt, formatNow, osLabel, utcOffset } from "../shared/environment.js";
 import { systemInfo } from "./terminal.js";
@@ -821,6 +822,22 @@ function fencesEven(text: string): boolean {
   return !m || m.length % 2 === 0;
 }
 
+/**
+ * Polls until a condition holds or the deadline passes.
+ *
+ * A pty is asynchronous in a way a fixed sleep handles badly: a shell can take
+ * a moment to start on a cold machine and almost no time on a warm one, so a
+ * sleep long enough to be reliable wastes that time on every run.
+ */
+async function waitFor(cond: () => boolean, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (cond()) return true;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return cond();
+}
+
 export async function runSelfTest(): Promise<void> {
   const failures: string[] = [];
   const check = (name: string, ok: boolean, detail = "") => {
@@ -1401,6 +1418,41 @@ export async function runSelfTest(): Promise<void> {
     // The limit has to sit in the gap the measurements found, or it is guesswork again.
     check("the limit sits between a stripped shell and the smallest real page",
       BLANK_PAGE_LIMIT > 45 && BLANK_PAGE_LIMIT < 142, String(BLANK_PAGE_LIMIT));
+
+    console.log("\n[selftest] pty sessions");
+    const reason = ptyUnavailableReason();
+    if (reason) {
+      check("node-pty loads", false, reason);
+    } else {
+      check("node-pty loads", true);
+
+      const sid = createSession({ cols: 80, rows: 24 });
+      check("a session starts", typeof sid === "string" && sid.length > 0);
+
+      if (sid) {
+        // Wait for the shell to come up and print a prompt.
+        const seen = () => scrollbackFor(sid);
+        await waitFor(() => seen().length > 0, 8000);
+        check("the shell produces output", seen().length > 0, `${seen().length} bytes`);
+
+        // The whole reason for a pty: a TTY on the far end, so programs emit
+        // colour. A plain spawn gets none of this.
+        const marker = "ATLA_PTY_MARKER";
+        ptyWrite(sid, `echo ${marker}\r`);
+        await waitFor(() => seen().includes(marker), 8000);
+        check("input reaches the shell and echoes back", seen().includes(marker));
+
+        check("a session is listed while it lives", listSessions().some((x) => x.id === sid));
+
+        // A hidden pane measures zero; resizing to it used to throw.
+        check("a zero-sized resize is refused rather than thrown", ptyResize(sid, 0, 0) === false);
+        check("a real resize is accepted", ptyResize(sid, 100, 30) === true);
+
+        killSession(sid);
+        check("a killed session is forgotten", !listSessions().some((x) => x.id === sid));
+        check("writing to a dead session fails quietly", ptyWrite(sid, "echo late\r") === false);
+      }
+    }
 
     console.log("\n[selftest] pop-out windows");
     // Real BrowserWindows, created and destroyed. They flash on screen during
