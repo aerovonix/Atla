@@ -34,6 +34,7 @@ import {
   geminiThinkingLevel,
   googleThinkingBudget,
   isGemini3,
+  nearestEffort,
   ollamaThink,
   openAIEffort,
   reasoningOptions
@@ -1612,6 +1613,24 @@ export async function runSelfTest(): Promise<void> {
     check("gpt-oss gets levels; a boolean thinker gets a switch",
       (reasoningOptions("ollama", "gpt-oss:20b", ["thinking"]) ?? []).length === 4 &&
         (reasoningOptions("ollama", "qwq", ["thinking"]) ?? []).length === 2);
+
+    // A model whose thinking is a plain on/off switch offers only [Off, High],
+    // and the stored preference is whatever was last picked globally. Left
+    // unresolved the control fell back to its first option and read "Off"
+    // while the adapter, which treats anything but off as on, sent thinking
+    // enabled -- a switch that says off while the thing is on.
+    const switchOnly = reasoningOptions("ollama", "qwq", ["thinking"]) ?? [];
+    check("a stored effort the model doesn't offer resolves to one it does",
+      nearestEffort(switchOnly, "medium") === "high" &&
+        ollamaThink(nearestEffort(switchOnly, "medium"), "qwq") === true,
+      nearestEffort(switchOnly, "medium"));
+    check("...and the resolved label agrees with what goes on the wire",
+      ollamaThink(nearestEffort(switchOnly, "low"), "qwq") ===
+        (nearestEffort(switchOnly, "low") !== "off"),
+      nearestEffort(switchOnly, "low"));
+    check("an effort the model does offer is left alone",
+      nearestEffort(switchOnly, "off") === "off" &&
+        nearestEffort(reasoningOptions("anthropic", "claude-opus-5") ?? [], "medium") === "medium");
 
     // budget_tokens must be below max_tokens or the request is rejected. The
     // ceiling moves rather than the budget, so "High" stays high.

@@ -14,7 +14,7 @@ import { DEFAULT_SETTINGS, SETTINGS_VERSION } from "../../shared/types";
 import { parseForcedTools } from "../../shared/toolCatalog";
 import { childrenOf } from "../../shared/branching";
 import { buildEnvironmentPrompt, type SystemInfo } from "../../shared/environment";
-import { reasoningOptions, type ReasoningEffort } from "../../shared/reasoning";
+import { nearestEffort, reasoningOptions, type ReasoningEffort } from "../../shared/reasoning";
 import { useTerminalStore } from "./terminalStore";
 import { useLocalModels } from "./localModelStore";
 
@@ -375,8 +375,13 @@ export const useStore = create<AtlaStore>((set, get) => {
     // can do, so it decides. Undefined means "no better information than the
     // name", which is what the adapters fall back on.
     const caps = useLocalModels.getState().capabilitiesFor(provider.id, model);
-    const reasoningSupported =
-      caps === undefined ? undefined : reasoningOptions(provider.kind, model, caps) !== null;
+    const effortOptions = reasoningOptions(provider.kind, model, caps);
+    const reasoningSupported = caps === undefined ? undefined : effortOptions !== null;
+    // Normalised against what this model actually offers, and by the same rule
+    // the composer's label uses — otherwise the button and the request can
+    // disagree about whether the model is going to think.
+    const wantedEffort = conv?.reasoningEffort ?? settings.reasoningEffort;
+    const reasoningEffort = effortOptions ? nearestEffort(effortOptions, wantedEffort) : wantedEffort;
     set((st) => ({ streaming: { ...st.streaming, [requestId]: { conversationId, assistantMessageId } } }));
 
     const wire = history.map(toWireMessage);
@@ -407,7 +412,7 @@ export const useStore = create<AtlaStore>((set, get) => {
       approveCommands: settings.commandApproval,
       fileTools,
       approveWrites: settings.fileWriteApproval,
-      reasoningEffort: conv?.reasoningEffort ?? settings.reasoningEffort,
+      reasoningEffort,
       reasoningSupported,
       desktop: settings.desktopEnabled
         ? {

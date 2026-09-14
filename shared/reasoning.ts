@@ -125,6 +125,37 @@ export function reasoningOptions(
   }
 }
 
+const EFFORT_RANK: Readonly<Record<ReasoningEffort, number>> = { off: 0, low: 1, medium: 2, high: 3 };
+
+/**
+ * The offered option closest to what was asked for.
+ *
+ * Not every model offers all four. A local model whose thinking is a plain
+ * on/off switch offers only [Off, High], and the stored preference is whatever
+ * the user last picked globally — "Medium", say, which is on that list nowhere.
+ *
+ * Without this the control renders the first option as a fallback and reads
+ * "Off" while the adapter, which collapses medium to "on" anyway, sends
+ * thinking enabled. A switch that says off while the thing is on is worse than
+ * no switch: it is a lie about what the next message will do. Snapping to the
+ * nearest rank makes the label and the wire agree, and ties go upward, since
+ * a model asked to think a medium amount should think rather than not.
+ */
+export function nearestEffort(options: readonly EffortOption[], effort: ReasoningEffort): ReasoningEffort {
+  if (options.length === 0) return "off";
+  if (options.some((o) => o.value === effort)) return effort;
+  const want = EFFORT_RANK[effort] ?? 0;
+  let best = options[0];
+  for (const option of options) {
+    const gap = Math.abs(EFFORT_RANK[option.value] - want);
+    const bestGap = Math.abs(EFFORT_RANK[best.value] - want);
+    if (gap < bestGap || (gap === bestGap && EFFORT_RANK[option.value] > EFFORT_RANK[best.value])) {
+      best = option;
+    }
+  }
+  return best.value;
+}
+
 /** Anthropic and Google want a number of tokens rather than a word. */
 const BUDGET: Record<Exclude<ReasoningEffort, "off">, number> = {
   low: 2048,

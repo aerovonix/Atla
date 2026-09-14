@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { reasoningOptions, type ReasoningEffort } from "../../shared/reasoning";
+import { nearestEffort, reasoningOptions, type ReasoningEffort } from "../../shared/reasoning";
 import { useStore } from "../state/store";
 import { useLocalModels } from "../state/localModelStore";
 import { BrainIcon, CheckIcon } from "./icons";
@@ -43,7 +43,11 @@ export function ReasoningControl({ conversationId }: { conversationId: string })
   const options = provider ? reasoningOptions(provider.kind, model, caps) : null;
   if (!options) return null;
 
-  const current = conv?.reasoningEffort ?? fallback;
+  // What the button says has to be what the next message does. A model whose
+  // thinking is a plain switch offers only Off and High, so a stored "medium"
+  // has to resolve to one of those rather than falling back to the first
+  // option while the adapter quietly treats it as on.
+  const current = nearestEffort(options, conv?.reasoningEffort ?? fallback);
   const active = options.find((o) => o.value === current) ?? options[0];
 
   return (
