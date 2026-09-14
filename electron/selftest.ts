@@ -203,7 +203,65 @@ async function runToolLoopTest(pageUrl: string): Promise<{
  * right: NDJSON instead of SSE, `arguments` as an object instead of a JSON
  * string, and tool results needing `tool_name`. This exercises all three.
  */
-async function runOllamaToolLoopTest(pageUrl: string): Promise<{
+/**
+ * A mock Ollama that rate-limits the first N requests before answering.
+ *
+ * Gemini is where this bites in practice -- a tool-calling turn is one request
+ * per iteration, and a free-tier quota of roughly ten a minute is gone in
+ * seconds -- but the retry lives in the shared request path, so any provider
+ * exercises it. Ollama is simply the cheapest one to stand up.
+ */
+async function runRateLimitTest(refusals: number, retryAfter?: string): Promise<{
+  text: string;
+  requests: number;
+}> {
+  let requests = 0;
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      requests++;
+      if (requests <= refusals) {
+        const headers: Record<string, string> = { "content-type": "application/json" };
+        if (retryAfter) headers["retry-after"] = retryAfter;
+        res.writeHead(429, headers);
+        res.end(JSON.stringify({ error: "rate limit exceeded" }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/x-ndjson" });
+      res.write(`${JSON.stringify({ message: { role: "assistant", content: "RECOVERED" }, done: false })}\n`);
+      res.write(JSON.stringify({ message: { role: "assistant", content: "" }, done: true }));
+      res.end();
+    });
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+  const cfg: ProviderConfig = {
+    id: "test-429", kind: "ollama", label: "mock 429",
+    baseUrl: `http://127.0.0.1:${port}`, models: ["mock"], createdAt: Date.now()
+  };
+  const req: ChatStreamRequest = {
+    requestId: "r429", providerId: "test-429", model: "mock", system: "test",
+    messages: [{ role: "user", content: "hi" }], temperature: 1, maxTokens: 64,
+    webSearch: false, browserTools: false, maxToolIterations: 1,
+    searchEngineUrl: "https://duckduckgo.com/?q=%s", forcedTools: [],
+    terminalTool: false, approveCommands: true, fileTools: false, approveWrites: true
+  };
+  let text = "";
+  try {
+    text = await streamChat(cfg, req, {
+      onChunk: (d) => { text += d; },
+      onToolEvent: () => {}
+    }, new AbortController().signal);
+  } catch {
+    /* a give-up is a valid outcome the caller asserts on */
+  }
+  server.close();
+  return { text, requests };
+}
+
+async function runOllamaToolLoopTest(pageUrl: string, unterminated = false): Promise<{
   text: string;
   toolEvents: ToolEvent[];
   requests: number;
@@ -227,20 +285,43 @@ async function runOllamaToolLoopTest(pageUrl: string): Promise<{
         }
       }
       res.writeHead(200, { "content-type": "application/x-ndjson" });
-      const line = (obj: unknown) => res.write(`${JSON.stringify(obj)}\n`);
+      // Real Ollama does not guarantee a trailing newline on its last frame.
+      // The polite version of this mock is why a dropped final line went
+      // unnoticed: every frame it sent was terminated, so the reader's habit
+      // of discarding the buffer remainder never cost anything.
+      const pending: string[] = [];
+      const line = (obj: unknown) => pending.push(JSON.stringify(obj));
+      const flush = () => {
+        pending.forEach((text, i) => {
+          const last = i === pending.length - 1;
+          res.write(last && unterminated ? text : `${text}\n`);
+        });
+        pending.length = 0;
+      };
 
       if (turn === 1) {
         // Ollama sends arguments as an object, not a JSON string.
-        line({
+        const call = {
           message: { role: "assistant", content: "", tool_calls: [{ function: { name: "browser_navigate", arguments: { url: pageUrl } } }] },
           done: false
-        });
-        line({ message: { role: "assistant", content: "" }, done: true });
+        };
+        if (unterminated) {
+          // What Ollama actually does: the tool call rides in the same final
+          // frame as done:true, and that frame is not newline-terminated.
+          // Putting the call in an earlier frame made the old mock pass
+          // whether or not the reader kept the buffer remainder.
+          line({ message: { role: "assistant", content: "thinking" }, done: false });
+          line({ ...call, done: true });
+        } else {
+          line(call);
+          line({ message: { role: "assistant", content: "" }, done: true });
+        }
       } else {
         line({ message: { role: "assistant", content: "ALPHA_" }, done: false });
         line({ message: { role: "assistant", content: "CONFIRMED" }, done: false });
         line({ message: { role: "assistant", content: "" }, done: true });
       }
+      flush();
       res.end();
     });
   });
@@ -1099,6 +1180,17 @@ export async function runSelfTest(): Promise<void> {
     );
     check("ollama loop made exactly 2 round trips", ol.requests === 2, `made ${ol.requests}`);
 
+    
+    // Regression: the frame carrying the tool call is the one most likely to
+    // arrive without a trailing newline, and the reader used to discard it.
+    // The turn then returned the text before the call and stopped, which
+    // looks from outside exactly like the model cutting itself off.
+    const olRaw = await runOllamaToolLoopTest(url1, true);
+    check("a tool call in an unterminated final frame still fires",
+      olRaw.toolEvents.length > 0, `${olRaw.toolEvents.length} tool events`);
+    check("and the turn completes instead of truncating",
+      olRaw.text.includes("CONFIRMED"), JSON.stringify(olRaw.text.slice(0, 60)));
+
     console.log("\n[selftest] tool-calling loop (mock Gemini)");
     const g = await runGoogleToolLoopTest(url1);
     check("gemini tool call executed", g.toolEvents.some((e) => e.name === "browser_navigate" && e.ok), JSON.stringify(g.toolEvents));
@@ -1263,6 +1355,28 @@ export async function runSelfTest(): Promise<void> {
     check("the port is closed after stopping", !reachable);
 
     check("lanAddresses returns strings", lanAddresses().every((a) => typeof a === "string"));
+
+    console.log("\n[selftest] rate limiting");
+    // A 429 used to end the turn outright, losing the answer and any tool
+    // results already gathered. Waiting is nearly always the right response.
+    const rl = await runRateLimitTest(2, "0");
+    check("a rate-limited request is retried, not abandoned",
+      rl.text.includes("RECOVERED"), JSON.stringify(rl.text));
+    check("it retries only as often as it needs to",
+      rl.requests === 3, `${rl.requests} requests`);
+
+    // Retry-After is the server saying how long to wait; it is honoured over
+    // our own backoff, in seconds or as an HTTP date.
+    const rlNoHeader = await runRateLimitTest(1);
+    check("it backs off even with no Retry-After header",
+      rlNoHeader.text.includes("RECOVERED"), JSON.stringify(rlNoHeader.text));
+
+    // Four attempts, then stop -- a quota that is genuinely exhausted should
+    // say so rather than have the app sit there retrying forever.
+    const rlHopeless = await runRateLimitTest(99, "0");
+    check("it gives up rather than retrying forever",
+      !rlHopeless.text.includes("RECOVERED") && rlHopeless.requests <= 4,
+      `${rlHopeless.requests} requests`);
 
     console.log("\n[selftest] blank page detection");
     // Fixtures are real measurements: raw HTML with script/style stripped,

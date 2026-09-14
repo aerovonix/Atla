@@ -91,6 +91,13 @@ async function readSSE(
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
+  const emit = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) return;
+    const data = trimmed.slice(5).trim();
+    if (data === "[DONE]") return;
+    onEvent(data);
+  };
   try {
     while (true) {
       if (signal.aborted) return;
@@ -99,14 +106,13 @@ async function readSSE(
       buf += decoder.decode(value, { stream: true });
       const lines = buf.split("\n");
       buf = lines.pop() ?? "";
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data:")) continue;
-        const data = trimmed.slice(5).trim();
-        if (data === "[DONE]") continue;
-        onEvent(data);
-      }
+      for (const line of lines) emit(line);
     }
+    // A stream can end without a trailing newline, leaving the last frame in
+    // the buffer. Well-behaved SSE ends with a blank line, so this bites less
+    // often here than in NDJSON -- but the cost of being wrong is a silently
+    // lost final delta, which is not worth trusting the server's manners for.
+    emit(buf);
   } finally {
     await reader.cancel().catch(() => {});
   }
@@ -132,9 +138,89 @@ async function readNDJSON(
         if (line.trim()) onEvent(line);
       }
     }
+    // Ollama's final frame -- the one carrying done:true, and usually the tool
+    // call -- routinely arrives with no trailing newline. Dropping it made a
+    // tool-calling turn hand back the little text that preceded the call and
+    // stop, which reads exactly like the model truncating itself.
+    if (buf.trim()) onEvent(buf);
   } finally {
     await reader.cancel().catch(() => {});
   }
+}
+
+/**
+ * Requests that back off instead of giving up.
+ *
+ * A tool-calling turn is not one request, it is one request per iteration, all
+ * issued as fast as the tools resolve. Gemini's free tier allows on the order
+ * of ten a minute, so a few tool steps exhaust the quota in seconds and every
+ * provider here previously turned that into a dead turn: 429 went straight to
+ * assertOk and the whole answer was lost, tool results included.
+ *
+ * Waiting is almost always the right response. The server usually says how
+ * long to wait, and when it does not, doubling with jitter avoids a room full
+ * of clients retrying in lockstep. Only the statuses that mean "later" are
+ * retried -- a 400 or a 401 will say the same thing however long we wait.
+ */
+const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+const MAX_ATTEMPTS = 4;
+
+/** Honours Retry-After in both its forms: seconds, or an HTTP date. */
+function retryAfterMs(res: Response): number | null {
+  const raw = res.headers.get("retry-after");
+  if (!raw) return null;
+  const secs = Number(raw);
+  if (Number.isFinite(secs)) return Math.max(0, secs * 1000);
+  const when = Date.parse(raw);
+  return Number.isFinite(when) ? Math.max(0, when - Date.now()) : null;
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(new Error("Aborted"));
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      reject(new Error("Aborted"));
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  onWait?: (ms: number, attempt: number) => void
+): Promise<Response> {
+  // Every caller already puts the turn's abort signal in the init, and the
+  // wait between attempts has to honour it too -- otherwise pressing Stop
+  // leaves a retry sleeping in the background, to wake and fire a request the
+  // person has already cancelled.
+  const signal = (init.signal ?? new AbortController().signal) as AbortSignal;
+  let lastStatus = 0;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const res = await fetch(url, init);
+    if (res.ok || !RETRYABLE.has(res.status)) return res;
+    lastStatus = res.status;
+    if (attempt === MAX_ATTEMPTS) return res;
+
+    // The body holds the provider's explanation; read it so the connection is
+    // freed, and so a final failure can still report what was said.
+    await res.text().catch(() => "");
+
+    // Capped, because a server asking for five minutes is not something to
+    // sit through silently -- better to fail and let the person decide.
+    const told = retryAfterMs(res);
+    const backoff = Math.min(30_000, 1000 * 2 ** (attempt - 1));
+    const jitter = Math.floor(Math.random() * 250);
+    const wait = Math.min(60_000, told ?? backoff + jitter);
+    onWait?.(wait, attempt);
+    await sleep(wait, signal);
+  }
+  throw new Error(`HTTP ${lastStatus}: giving up after ${MAX_ATTEMPTS} attempts`);
 }
 
 async function assertOk(res: Response) {
@@ -202,7 +288,7 @@ async function streamAnthropic(
   for (let iteration = 0; iteration <= req.maxToolIterations; iteration++) {
     if (signal.aborted) return full;
 
-    const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/v1/messages`, {
+    const res = await fetchWithRetry(`${baseUrl.replace(/\/+$/, "")}/v1/messages`, {
       method: "POST",
       signal,
       headers: {
@@ -342,7 +428,7 @@ async function streamOpenAIStyle(
   for (let iteration = 0; iteration <= req.maxToolIterations; iteration++) {
     if (signal.aborted) return full;
 
-    const res = await fetch(`${opts.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+    const res = await fetchWithRetry(`${opts.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
       signal,
       headers: {
@@ -521,7 +607,7 @@ async function streamGoogle(
   for (let iteration = 0; iteration <= req.maxToolIterations; iteration++) {
     if (signal.aborted) return full;
 
-    const res = await fetch(url, {
+    const res = await fetchWithRetry(url, {
       method: "POST",
       signal,
       headers: { "content-type": "application/json" },
@@ -643,7 +729,7 @@ async function streamOllama(
   for (let iteration = 0; iteration <= req.maxToolIterations; iteration++) {
     if (signal.aborted) return full;
 
-    const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/chat`, {
+    const res = await fetchWithRetry(`${baseUrl.replace(/\/+$/, "")}/api/chat`, {
       method: "POST",
       signal,
       headers: { "content-type": "application/json" },
