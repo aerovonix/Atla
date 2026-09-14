@@ -37,14 +37,15 @@ let server: http.Server | null = null;
 let pairingCode = "";
 let pairing: PairingState = { failures: 0, lockedUntil: 0 };
 const sessions = new Map<string, Session>();
-let targetWindow: BrowserWindow | null = null;
+// Resolved on demand; see initNotify for why a stored reference is wrong here.
+let getWindow: () => BrowserWindow | null = () => null;
 let boundPort = 0;
 
 /** A session is only as good as the run that made it. */
 const SESSION_TTL_MS = 12 * 60 * 60_000;
 
-export function initWebDash(win: BrowserWindow) {
-  targetWindow = win;
+export function initWebDash(resolve: () => BrowserWindow | null) {
+  getWindow = resolve;
 }
 
 /** The LAN addresses this machine can actually be reached on. */
@@ -107,6 +108,7 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 /** Asks the renderer for data, since the store lives there. */
 function askRenderer(request: DashRequest): Promise<unknown> {
   return new Promise((resolve) => {
+    const targetWindow = getWindow();
     if (!targetWindow || targetWindow.isDestroyed()) return resolve(null);
     const id = crypto.randomBytes(8).toString("hex");
     const channel = `dash:reply:${id}`;

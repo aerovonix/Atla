@@ -273,12 +273,12 @@ app.whenReady().then(async () => {
   registerUpdaterIpc();
   registerWebDashIpc();
   registerNotifyIpc();
-  initWebDash(mainWindow!);
-  initNotify(mainWindow!);
+  initWebDash(() => mainWindow);
+  initNotify(() => mainWindow);
   // Starts enabled; the renderer syncs the user's real setting once the store
   // is hydrated. Main doesn't read settings itself, and a first check is
   // eight seconds out, so there's time for that to land first.
-  initUpdater(mainWindow!, true);
+  initUpdater(() => mainWindow, true);
   registerApprovalIpc();
 
   ipcMain.handle("browser:stats", () => adblocker.stats);

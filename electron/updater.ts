@@ -29,7 +29,11 @@ const CHECK_INTERVAL_MS = 6 * 60 * 60_000;
  */
 const STALL_TIMEOUT_MS = 90_000;
 
-let targetWindow: BrowserWindow | null = null;
+// Resolved on demand: the window is created after this module is wired up,
+// and is nulled again when it closes. A reference captured at either moment
+// is wrong, and a wrong one here means update:state never reaches the
+// renderer — the banner simply never appears.
+let getWindow: () => BrowserWindow | null = () => null;
 let timer: ReturnType<typeof setInterval> | null = null;
 let enabled = true;
 
@@ -41,6 +45,7 @@ let state: UpdateState = {
 
 function push(patch: Partial<UpdateState>) {
   state = { ...state, ...patch };
+  const targetWindow = getWindow();
   if (targetWindow && !targetWindow.isDestroyed()) {
     targetWindow.webContents.send("update:state", state);
   }
@@ -74,8 +79,8 @@ export function applyChannel(channel: UpdateChannel) {
   autoUpdater.isUpdateSupported = (info) => acceptsVersion(channel, info.version);
 }
 
-export function initUpdater(win: BrowserWindow, autoUpdateEnabled: boolean) {
-  targetWindow = win;
+export function initUpdater(resolve: () => BrowserWindow | null, autoUpdateEnabled: boolean) {
+  getWindow = resolve;
   enabled = autoUpdateEnabled;
 
   // Downloading is fine unattended; installing is not. This is the line

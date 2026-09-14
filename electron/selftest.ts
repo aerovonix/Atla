@@ -45,6 +45,7 @@ import { createSession, write as ptyWrite, resize as ptyResize, killSession, lis
 import { unifiedDiff, diffStat } from "../shared/diff.js";
 import { buildEnvironmentPrompt, formatNow, osLabel, utcOffset } from "../shared/environment.js";
 import { systemInfo } from "./terminal.js";
+import { notifyTarget, shouldNotify } from "./notify.js";
 import { streamChat, sanitizeTitle, generateTitle } from "./providers.js";
 import { listModels, loadModel, supportsModelManagement, unloadModel } from "./localModels.js";
 import { reviewAndRevise } from "./critic.js";
@@ -1931,6 +1932,22 @@ export async function runSelfTest(): Promise<void> {
     check("si is stripped on youtube", !stripTracking("https://youtu.be/abc?si=xyz").includes("si="));
     check("si survives elsewhere", stripTracking("https://maps.test/a?si=7").includes("si=7"));
     check("an unparseable url is returned as-is", stripTracking("notaurl") === "notaurl");
+
+    // The whole point of the toast is that it fires for something the user is
+    // not watching. That guard needs a window to ask about focus, and the
+    // window did not exist when notify was wired up -- it was handed a `null`
+    // that a non-null assertion made typecheck. With no window to ask, the
+    // check fell through and every finished reply raised a toast, focused or
+    // not. Same null reached the updater, where it meant update:state never
+    // reached the renderer at all.
+    check("notifications can find the window to check focus against",
+      notifyTarget() !== null);
+    check("a focused window suppresses the toast",
+      shouldNotify({ supported: true, focused: true }) === false);
+    check("an unfocused one raises it",
+      shouldNotify({ supported: true, focused: false }) === true);
+    check("an OS that can't show notifications never does",
+      shouldNotify({ supported: false, focused: false }) === false);
 
     console.log("\n[selftest] notification text");
     // A toast renders none of this, so every marker arrives as literal
