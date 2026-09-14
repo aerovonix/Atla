@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { nearestEffort, reasoningOptions, type ReasoningEffort } from "../../shared/reasoning";
 import { useStore } from "../state/store";
 import { useLocalModels } from "../state/localModelStore";
-import { BrainIcon, CheckIcon } from "./icons";
+import { CheckIcon, LightbulbIcon } from "./icons";
 
 /** The short form on the button face. "Off" is spelled out; the rest are initials. */
 const SHORT: Record<ReasoningEffort, string> = {
@@ -59,7 +59,7 @@ export function ReasoningControl({ conversationId }: { conversationId: string })
         }`}
         title={`Reasoning effort: ${active.label}`}
       >
-        <BrainIcon width={16} height={16} />
+        <LightbulbIcon width={16} height={16} />
         <span className="text-[11px] font-medium leading-none">{SHORT[active.value]}</span>
       </button>
       {open && (

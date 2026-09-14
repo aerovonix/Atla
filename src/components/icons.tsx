@@ -287,18 +287,11 @@ export const DesktopIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
-/** Reasoning effort. A brain-ish loop — distinct from the sparkle at 16px. */
-export const BrainIcon = (p: SVGProps<SVGSVGElement>) => (
+/** Reasoning effort. A lit bulb: the idea, not the organ. */
+export const LightbulbIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
-    <path d="M9.5 3.5A3 3 0 0 0 6.6 7 2.7 2.7 0 0 0 5 9.4c0 .9.4 1.7 1.1 2.2A2.8 2.8 0 0 0 5.4 14c0 1.4 1 2.6 2.4 2.9A2.6 2.6 0 0 0 10.4 20a2.3 2.3 0 0 0 1.6-.6V4.6a2.3 2.3 0 0 0-2.5-1.1z" />
-    <path d="M14.5 3.5A3 3 0 0 1 17.4 7 2.7 2.7 0 0 1 19 9.4c0 .9-.4 1.7-1.1 2.2.4.6.7 1.3.7 2.4 0 1.4-1 2.6-2.4 2.9A2.6 2.6 0 0 1 13.6 20a2.3 2.3 0 0 1-1.6-.6" />
-  </svg>
-);
-
-/** Model residency: a chip that is either powered or not. */
-export const ChipIcon = (p: SVGProps<SVGSVGElement>) => (
-  <svg {...base(p)}>
-    <rect x="7" y="7" width="10" height="10" rx="2" />
-    <path d="M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3" />
+    <path d="M9 18h6" />
+    <path d="M10 21h4" />
+    <path d="M12 3a6 6 0 0 0-3.6 10.8c.5.4.8.9.9 1.5l.1.7h5.2l.1-.7c.1-.6.4-1.1.9-1.5A6 6 0 0 0 12 3z" />
   </svg>
 );
