@@ -6,6 +6,7 @@ import type {
   ChatStreamRequest,
   FetchModelsResponse,
   GenerateTitleResponse,
+  LocalModelResult,
   PersistedData,
   ProviderConfig,
   TerminalEvent,
@@ -33,6 +34,13 @@ export interface AtlaBridge {
     start: (req: ChatStreamRequest) => void;
     cancel: (requestId: string) => void;
     onEvent: (cb: (evt: ChatStreamEvent) => void) => () => void;
+  };
+  models: {
+    list: (cfg: ProviderConfig) => Promise<LocalModelResult>;
+    capabilities: (cfg: ProviderConfig, model: string) => Promise<string[] | null>;
+    load: (cfg: ProviderConfig, model: string, keepAliveMinutes: number) => Promise<{ ok: boolean; error?: string }>;
+    unload: (cfg: ProviderConfig, model: string) => Promise<{ ok: boolean; error?: string }>;
+    cancelLoad: (providerId: string, model: string) => Promise<boolean>;
   };
   provider: {
     fetchModels: (cfg: ProviderConfig) => Promise<FetchModelsResponse>;

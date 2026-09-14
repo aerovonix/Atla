@@ -16,6 +16,7 @@ import {
   StopIcon,
   ToolIcon
 } from "./icons";
+import { ReasoningControl } from "./ReasoningControl";
 
 export interface ComposerDraft {
   text: string;
@@ -553,6 +554,8 @@ export function Composer({
             <SendIcon width={16} height={16} />
           </button>
         )}
+        <ReasoningControl conversationId={conversationId} />
+
         {streaming ? (
           <button
             onClick={onStop}

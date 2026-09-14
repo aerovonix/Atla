@@ -9,6 +9,7 @@ import type {
   ChatStreamRequest,
   FetchModelsResponse,
   GenerateTitleResponse,
+  LocalModelResult,
   PersistedData,
   ProviderConfig,
   TerminalEvent
@@ -37,6 +38,21 @@ const api = {
       ipcRenderer.on("chat:event", listener);
       return () => ipcRenderer.removeListener("chat:event", listener);
     }
+  },
+  /**
+   * Local model residency. Load can take minutes on a large model, so the
+   * renderer holds the promise and shows progress rather than blocking.
+   */
+  models: {
+    list: (cfg: ProviderConfig): Promise<LocalModelResult> => ipcRenderer.invoke("models:list", cfg),
+    capabilities: (cfg: ProviderConfig, model: string): Promise<string[] | null> =>
+      ipcRenderer.invoke("models:capabilities", cfg, model),
+    load: (cfg: ProviderConfig, model: string, keepAliveMinutes: number): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke("models:load", cfg, model, keepAliveMinutes),
+    unload: (cfg: ProviderConfig, model: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke("models:unload", cfg, model),
+    cancelLoad: (providerId: string, model: string): Promise<boolean> =>
+      ipcRenderer.invoke("models:cancel-load", providerId, model)
   },
   provider: {
     fetchModels: (cfg: ProviderConfig): Promise<FetchModelsResponse> => ipcRenderer.invoke("provider:fetch-models", cfg),

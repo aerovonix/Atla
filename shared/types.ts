@@ -2,7 +2,9 @@
 
 import type { UpdateChannel } from "./channels.js";
 import type { SpeedTier } from "./blocking.js";
+import type { ReasoningEffort } from "./reasoning.js";
 export type { SpeedTier };
+export type { ReasoningEffort };
 export type { UpdateChannel };
 
 /** Panes that can be shown in a window of their own. */
@@ -73,6 +75,15 @@ export interface ChatMessage {
   disliked?: boolean;
   /** Tool activity (browser/web search) that ran while producing this message. */
   toolEvents?: ToolEvent[];
+  /**
+   * The model's reasoning, when it reported any on a channel of its own.
+   *
+   * Kept apart from `content` rather than inlined: it is not the answer, it
+   * must not be echoed back to the provider as if it were, and copying the
+   * message should not carry it along. Models that instead write <think> tags
+   * into the body are split out at render time by splitThinking.
+   */
+  reasoning?: string;
 }
 
 export interface ToolEvent {
@@ -126,6 +137,8 @@ export interface Conversation {
   terminalTool?: boolean;
   /** Per-conversation override; falls back to settings.fileToolsEnabled. */
   fileTools?: boolean;
+  /** Per-conversation override; falls back to settings.reasoningEffort. */
+  reasoningEffort?: ReasoningEffort;
   /**
    * Where this chat was split off from, when it was. The parent keeps no list
    * of its children — deriving that from this field means deleting a parent
@@ -194,6 +207,12 @@ export interface AppSettings {
   maxTokens: number;
   /** Replaces Atla's built-in persona entirely when non-empty. */
   systemPromptOverride: string;
+
+  /**
+   * How hard reasoning-capable models should think by default. Ignored by
+   * models that can't, which is most of them — see shared/reasoning.ts.
+   */
+  reasoningEffort: ReasoningEffort;
 
   // Capabilities
   webSearchEnabled: boolean;
@@ -286,6 +305,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   temperature: 1,
   maxTokens: 4096,
   systemPromptOverride: "",
+  // Medium rather than off: a model that reasons was chosen for that, and the
+  // providers' own defaults are around here anyway. Off is one click away.
+  reasoningEffort: "medium",
 
   // Available by default — these grant the model permission to use a tool, not
   // an instruction to use it every turn. It decides per message.
@@ -377,6 +399,18 @@ export interface ChatStreamRequest {
   fileTools: boolean;
   /** Ask the user before each write or edit lands. */
   approveWrites: boolean;
+  /** How hard to think. Dropped by adapters whose model can't reason. */
+  reasoningEffort: ReasoningEffort;
+  /**
+   * The renderer's verdict on whether this model reasons at all.
+   *
+   * It knows more than the adapters do: for Ollama it has asked the server
+   * directly, and a local fine-tune can be named anything. Left undefined
+   * (the title generator, older callers) the adapter falls back to guessing
+   * from the model name. This matters most on Ollama, where sending
+   * `think: true` to a model that can't is a rejected request, not a no-op.
+   */
+  reasoningSupported?: boolean;
   /** When set, the answer is reviewed and possibly revised before it settles. */
   critic?: CriticRequest;
   /** Desktop control, off unless the user turned it on for this message. */
@@ -404,6 +438,8 @@ export interface CriticRequest {
 export type ChatStreamEvent =
   | { type: "chunk"; requestId: string; delta: string }
   | { type: "tool"; requestId: string; event: ToolEvent }
+  /** A slice of the model's reasoning, on its own channel — never the answer. */
+  | { type: "reasoning"; requestId: string; delta: string }
   | { type: "reviewing"; requestId: string; round: number }
   /**
    * The reviewer asked for changes. The renderer moves what has streamed so
@@ -506,6 +542,38 @@ export type FileReadResult =
   | { ok: false; error: string };
 
 export type FileSaveResult = { ok: true; path: string } | { ok: false; error: string };
+
+/**
+ * A model on a local runtime, and whether it is resident right now.
+ *
+ * Loading a large model can take minutes, during which a chat request simply
+ * appears to hang. Surfacing residency lets that wait happen deliberately,
+ * before a message is sent, instead of in the middle of one.
+ */
+export interface LocalModel {
+  name: string;
+  /** Bytes on disk. */
+  size: number;
+  parameterSize?: string;
+  quantization?: string;
+  /** Resident in memory now, so the next message starts immediately. */
+  loaded: boolean;
+  /** Bytes currently in VRAM; 0 means it is running on the CPU. */
+  vram?: number;
+  /** When the runtime will evict it, ISO-8601. */
+  expiresAt?: string;
+  /** Ollama's own answer: "completion", "tools", "thinking", "vision". */
+  capabilities?: string[];
+  /**
+   * Served from the provider's cloud rather than this machine. Nothing local
+   * to load or evict, so the residency controls don't apply.
+   */
+  remote?: boolean;
+}
+
+export type LocalModelResult =
+  | { ok: true; models: LocalModel[] }
+  | { ok: false; error: string };
 
 /** What the settings panel shows about the web dash. */
 export interface DashStatus {

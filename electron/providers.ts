@@ -1,5 +1,15 @@
 import type { ChatStreamRequest, ProviderConfig, ProviderKind, ToolEvent } from "../shared/types.js";
 import { NATIVE_WEB_SEARCH, PROVIDER_LABELS, SUPPORTS_TOOL_CALLS } from "../shared/types.js";
+import {
+  anthropicThinking,
+  geminiThinkingLevel,
+  googleThinkingBudget,
+  isGemini3,
+  ollamaThink,
+  openAIEffort,
+  reasoningOptions,
+  type ReasoningEffort
+} from "../shared/reasoning.js";
 import { collectTools, executeTool, type ToolContext, type ToolDef } from "./tools.js";
 import { requestApproval } from "./approvals.js";
 import { getCwd } from "./terminal.js";
@@ -7,6 +17,27 @@ import { getCwd } from "./terminal.js";
 export interface StreamHandlers {
   onChunk: (delta: string) => void;
   onToolEvent: (evt: ToolEvent) => void;
+  /**
+   * A slice of the model's reasoning. Separate from onChunk because it is not
+   * the answer: it must not be echoed back as assistant text, and it renders
+   * in a block of its own.
+   */
+  onReasoning?: (delta: string) => void;
+}
+
+/**
+ * What this turn should ask for, or null if the model can't reason.
+ *
+ * Null means send nothing at all, which is not the same as "off". Ollama
+ * rejects `think: true` on a model without the capability, so a model we
+ * aren't sure about must not be sent a hopeful one -- and sending nothing is
+ * cleaner than reasoning about which disabled spellings each server happens
+ * to tolerate.
+ */
+function effortFor(req: ChatStreamRequest, kind: ProviderKind): ReasoningEffort | null {
+  if (req.reasoningSupported === false) return null;
+  if (req.reasoningSupported !== true && !reasoningOptions(kind, req.model)) return null;
+  return req.reasoningEffort ?? "off";
 }
 
 interface ToolCall {
@@ -267,6 +298,13 @@ async function streamAnthropic(
   });
   const tools = anthropicTools(localTools, nativeSearch);
 
+  // Extended thinking changes three things about the request, not one: the
+  // budget has to fit inside max_tokens, temperature has to be left at its
+  // default, and tool_choice can no longer be forced. Getting any of those
+  // wrong is a 400, so they all move together.
+  const effort = effortFor(req, "anthropic");
+  const thinking = effort ? anthropicThinking(effort, req.maxTokens) : null;
+
   const messages: unknown[] = req.messages.map((m) => {
     if (m.role === "user" && m.imageDataUrls && m.imageDataUrls.length > 0) {
       return {
@@ -300,11 +338,13 @@ async function streamAnthropic(
       body: JSON.stringify({
         model: req.model,
         system: req.system || undefined,
-        max_tokens: req.maxTokens,
-        temperature: req.temperature,
+        max_tokens: thinking ? thinking.maxTokens : req.maxTokens,
+        ...(thinking
+          ? { thinking: { type: "enabled", budget_tokens: thinking.budget } }
+          : { temperature: req.temperature }),
         stream: true,
         ...(tools.length > 0 ? { tools } : {}),
-        ...forcedChoice(req, iteration, tools.length, "anthropic"),
+        ...(thinking ? {} : forcedChoice(req, iteration, tools.length, "anthropic")),
         messages
       })
     });
@@ -314,6 +354,11 @@ async function streamAnthropic(
     const blocks = new Map<number, { type: string; toolIndex?: number }>();
     let stopReason: string | null = null;
     let iterationText = "";
+    // Thinking blocks are signed, and Anthropic rejects the follow-up request
+    // if a tool result arrives without the thinking that led to the call --
+    // unmodified, signature included. So they are kept verbatim rather than
+    // merely forwarded to the UI.
+    const thoughtBlocks: { thinking: string; signature: string }[] = [];
 
     await readSSE(
       res.body!,
@@ -331,16 +376,36 @@ async function streamAnthropic(
           if (block.type === "tool_use") {
             toolCalls.push({ id: block.id ?? "", name: block.name ?? "", argsText: "" });
             blocks.set(idx, { type: "tool_use", toolIndex: toolCalls.length - 1 });
+          } else if (block.type === "thinking") {
+            thoughtBlocks.push({ thinking: "", signature: "" });
+            blocks.set(idx, { type: "thinking", toolIndex: thoughtBlocks.length - 1 });
           } else {
             blocks.set(idx, { type: block.type });
           }
         } else if (type === "content_block_delta") {
           const idx = evt.index as number;
-          const delta = evt.delta as { type: string; text?: string; partial_json?: string };
+          const delta = evt.delta as {
+            type: string;
+            text?: string;
+            partial_json?: string;
+            thinking?: string;
+            signature?: string;
+          };
           if (delta.type === "text_delta" && delta.text) {
             iterationText += delta.text;
             full += delta.text;
             handlers.onChunk(delta.text);
+          } else if (delta.type === "thinking_delta" && delta.thinking) {
+            const info = blocks.get(idx);
+            if (info?.type === "thinking" && info.toolIndex !== undefined) {
+              thoughtBlocks[info.toolIndex].thinking += delta.thinking;
+            }
+            handlers.onReasoning?.(delta.thinking);
+          } else if (delta.type === "signature_delta" && delta.signature) {
+            const info = blocks.get(idx);
+            if (info?.type === "thinking" && info.toolIndex !== undefined) {
+              thoughtBlocks[info.toolIndex].signature += delta.signature;
+            }
           } else if (delta.type === "input_json_delta") {
             const info = blocks.get(idx);
             if (info?.toolIndex !== undefined) toolCalls[info.toolIndex].argsText += delta.partial_json ?? "";
@@ -362,6 +427,11 @@ async function streamAnthropic(
     messages.push({
       role: "assistant",
       content: [
+        // Thinking first, and unedited: the signature covers the exact text,
+        // so trimming or reordering here invalidates it.
+        ...thoughtBlocks
+          .filter((t) => t.signature)
+          .map((t) => ({ type: "thinking", thinking: t.thinking, signature: t.signature })),
         ...(iterationText ? [{ type: "text", text: iterationText }] : []),
         ...toolCalls.map((tc) => ({ type: "tool_use", id: tc.id, name: tc.name, input: parseArgs(tc.argsText) }))
       ]
@@ -395,7 +465,13 @@ async function streamOpenAIStyle(
   req: ChatStreamRequest,
   handlers: StreamHandlers,
   signal: AbortSignal,
-  opts: { baseUrl: string; extraHeaders?: Record<string, string>; nativeSearch?: boolean }
+  opts: {
+    baseUrl: string;
+    extraHeaders?: Record<string, string>;
+    nativeSearch?: boolean;
+    /** Which dialect of "think harder" this endpoint speaks. */
+    reasoningStyle: "openai" | "openrouter";
+  }
 ): Promise<string> {
   const localTools = collectTools({
     webSearch: req.webSearch && !opts.nativeSearch,
@@ -406,6 +482,31 @@ async function streamOpenAIStyle(
     forced: req.forcedTools
   });
   const tools = openAITools(localTools);
+
+  const effort = effortFor(req, cfg.kind);
+
+  /**
+   * OpenAI's own reasoning models moved the goalposts on two long-standing
+   * parameters: `max_tokens` is rejected outright in favour of
+   * `max_completion_tokens`, and `temperature` may only be 1. Both are hard
+   * errors rather than warnings, so every request to one of these models was
+   * failing before this — reasoning effort just made it visible.
+   *
+   * This applies to api.openai.com, not to everything that speaks its dialect.
+   * LM Studio and vLLM take `max_tokens` and a temperature perfectly happily,
+   * and swapping the parameters out from under them would break working setups
+   * to satisfy a rule their server doesn't have.
+   */
+  const strictOpenAI = cfg.kind === "openai" && effort !== null;
+
+  const reasoningParams: Record<string, unknown> =
+    effort === null
+      ? {}
+      : opts.reasoningStyle === "openrouter"
+        ? effort === "off"
+          ? { reasoning: { enabled: false } }
+          : { reasoning: { effort } }
+        : { reasoning_effort: openAIEffort(effort, req.model) };
 
   const messages: Record<string, unknown>[] = [];
   if (req.system) messages.push({ role: "system", content: req.system });
@@ -439,8 +540,10 @@ async function streamOpenAIStyle(
       body: JSON.stringify({
         model: req.model,
         stream: true,
-        temperature: req.temperature,
-        max_tokens: req.maxTokens,
+        ...(strictOpenAI
+          ? { max_completion_tokens: req.maxTokens }
+          : { temperature: req.temperature, max_tokens: req.maxTokens }),
+        ...reasoningParams,
         ...(tools.length > 0 ? { tools } : {}),
         ...forcedChoice(req, iteration, tools.length, "openai"),
         ...(opts.nativeSearch ? { plugins: [{ id: "web" }] } : {}),
@@ -459,6 +562,10 @@ async function streamOpenAIStyle(
           choices?: {
             delta?: {
               content?: string;
+              /** OpenRouter's spelling. */
+              reasoning?: string;
+              /** DeepSeek's, and what vLLM and LM Studio copied. */
+              reasoning_content?: string;
               tool_calls?: { index: number; id?: string; function?: { name?: string; arguments?: string } }[];
             };
           }[];
@@ -477,6 +584,11 @@ async function streamOpenAIStyle(
           full += delta.content;
           handlers.onChunk(delta.content);
         }
+        // Two names for the same channel, and some servers send both on the
+        // same delta rather than picking one. Taking either -- but not both --
+        // keeps the reasoning from arriving doubled.
+        const reasoning = delta.reasoning ?? delta.reasoning_content;
+        if (reasoning) handlers.onReasoning?.(reasoning);
         for (const tc of delta.tool_calls ?? []) {
           const idx = tc.index ?? 0;
           while (toolCalls.length <= idx) toolCalls.push({ id: "", name: "", argsText: "" });
@@ -550,6 +662,8 @@ function googleTools(defs: ToolDef[]): unknown[] {
 
 interface GooglePart {
   text?: string;
+  /** Set on a part that is reasoning rather than answer. */
+  thought?: boolean;
   functionCall?: { name?: string; args?: unknown };
   /**
    * Gemini 3 signs each function call and rejects the follow-up request if the
@@ -601,6 +715,18 @@ async function streamGoogle(
     req.model
   )}:streamGenerateContent?alt=sse&key=${encodeURIComponent(cfg.apiKey ?? "")}`;
 
+  // Gemini 2.5 takes a token budget; Gemini 3 replaced it with two named
+  // levels and rejects the budget field. Both hang off thinkingConfig, and
+  // includeThoughts is what makes the reasoning visible at all -- without it
+  // the model still thinks, it just never says so.
+  const effort = effortFor(req, "google");
+  const thinkingConfig =
+    effort === null
+      ? undefined
+      : isGemini3(req.model)
+        ? { includeThoughts: true, thinkingLevel: geminiThinkingLevel(effort) }
+        : { includeThoughts: true, thinkingBudget: googleThinkingBudget(effort, req.model) };
+
   let full = "";
   let announcedSearch = false;
 
@@ -614,7 +740,11 @@ async function streamGoogle(
       body: JSON.stringify({
         contents,
         systemInstruction: req.system ? { parts: [{ text: req.system }] } : undefined,
-        generationConfig: { temperature: req.temperature, maxOutputTokens: req.maxTokens },
+        generationConfig: {
+          temperature: req.temperature,
+          maxOutputTokens: req.maxTokens,
+          ...(thinkingConfig ? { thinkingConfig } : {})
+        },
         ...(tools ? { tools } : {}),
         ...forcedChoice(req, iteration, localTools.length, "google")
       })
@@ -652,9 +782,16 @@ async function streamGoogle(
               signature: part.thoughtSignature ?? part.thought_signature
             });
           } else if (part.text) {
-            iterationText += part.text;
-            full += part.text;
-            handlers.onChunk(part.text);
+            // A thought part carries the same `text` field as an answer part,
+            // so reading it without checking the flag would splice the
+            // model's reasoning into the middle of its reply.
+            if (part.thought) {
+              handlers.onReasoning?.(part.text);
+            } else {
+              iterationText += part.text;
+              full += part.text;
+              handlers.onChunk(part.text);
+            }
           }
         }
       },
@@ -711,6 +848,15 @@ async function streamOllama(
   });
   const tools = openAITools(localTools);
 
+  // `think` is the one reasoning parameter here that fails loudly: a model
+  // without the capability answers `"<model>" does not support thinking` and
+  // the turn is lost. (Measured: `think: false` is tolerated, `think: true`
+  // is not -- so the danger is believing a model reasons when it doesn't.)
+  // An unknown model therefore sees no field at all, which effortFor signals
+  // by returning null rather than "off".
+  const effort = effortFor(req, "ollama");
+  const think = effort === null ? undefined : ollamaThink(effort, req.model);
+
   const messages: Record<string, unknown>[] = [];
   if (req.system) messages.push({ role: "system", content: req.system });
   for (const m of req.messages) {
@@ -737,6 +883,7 @@ async function streamOllama(
         model: req.model,
         stream: true,
         options: { temperature: req.temperature, num_predict: req.maxTokens },
+        ...(think === undefined ? {} : { think }),
         ...(tools.length > 0 ? { tools } : {}),
         messages
       })
@@ -750,7 +897,12 @@ async function streamOllama(
       res.body!,
       (line) => {
         let evt: {
-          message?: { content?: string; tool_calls?: { function?: { name?: string; arguments?: unknown } }[] };
+          message?: {
+            content?: string;
+            /** Populated only when `think` was sent and the model supports it. */
+            thinking?: string;
+            tool_calls?: { function?: { name?: string; arguments?: unknown } }[];
+          };
           error?: string;
         };
         try {
@@ -765,6 +917,7 @@ async function streamOllama(
           full += delta;
           handlers.onChunk(delta);
         }
+        if (evt.message?.thinking) handlers.onReasoning?.(evt.message.thinking);
         for (const tc of evt.message?.tool_calls ?? []) {
           if (tc.function?.name) toolCalls.push({ name: tc.function.name, args: tc.function.arguments ?? {} });
         }
@@ -852,7 +1005,11 @@ export async function generateTitle(
     terminalTool: false,
     approveCommands: true,
     fileTools: false,
-    approveWrites: true
+    approveWrites: true,
+    // Naming a chat is a three-word job. Thinking about it first would cost
+    // more than the answer and delay a label nobody is waiting on.
+    reasoningEffort: "off",
+    reasoningSupported: false
   };
   let out = "";
   await streamChat(cfg, req, { onChunk: (d) => (out += d), onToolEvent: () => {} }, signal);
@@ -893,17 +1050,25 @@ export async function streamChat(
       return streamOllama(cfg, req, handlers, signal);
     case "openai":
       return streamOpenAIStyle(cfg, req, handlers, signal, {
-        baseUrl: cfg.baseUrl?.trim() || OPENAI_BASE.openai
+        baseUrl: cfg.baseUrl?.trim() || OPENAI_BASE.openai,
+        reasoningStyle: "openai"
       });
     case "openrouter":
       return streamOpenAIStyle(cfg, req, handlers, signal, {
         baseUrl: cfg.baseUrl?.trim() || OPENAI_BASE.openrouter,
         extraHeaders: { "HTTP-Referer": "https://atla.app", "X-Title": "Atla" },
-        nativeSearch: req.webSearch
+        nativeSearch: req.webSearch,
+        reasoningStyle: "openrouter"
       });
     case "openai-compatible":
       if (!cfg.baseUrl) throw new Error("This provider needs a base URL.");
-      return streamOpenAIStyle(cfg, req, handlers, signal, { baseUrl: cfg.baseUrl });
+      // An OpenAI-compatible server is whatever someone pointed Atla at, so
+      // it gets the plain OpenAI spelling -- the one every such server claims
+      // to implement -- rather than OpenRouter's extension.
+      return streamOpenAIStyle(cfg, req, handlers, signal, {
+        baseUrl: cfg.baseUrl,
+        reasoningStyle: "openai"
+      });
     default:
       throw new Error(`Unknown provider kind: ${cfg.kind}`);
   }

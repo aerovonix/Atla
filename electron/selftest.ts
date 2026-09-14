@@ -29,6 +29,15 @@ import {
 } from "../shared/blocking.js";
 import { TRACKER_ALLOW, TRACKER_DOMAINS, TRACKER_PATTERNS } from "../shared/trackers.js";
 import { splitStreaming } from "../shared/streamSplit.js";
+import {
+  anthropicThinking,
+  geminiThinkingLevel,
+  googleThinkingBudget,
+  isGemini3,
+  ollamaThink,
+  openAIEffort,
+  reasoningOptions
+} from "../shared/reasoning.js";
 import { acceptsVersion, prereleaseId, describeVersion } from "../shared/channels.js";
 import { popOutPane, poppedPanes, closeAllPopouts } from "./windows.js";
 import { createSession, write as ptyWrite, resize as ptyResize, killSession, listSessions, scrollbackFor, ptyUnavailableReason } from "./pty.js";
@@ -36,9 +45,10 @@ import { unifiedDiff, diffStat } from "../shared/diff.js";
 import { buildEnvironmentPrompt, formatNow, osLabel, utcOffset } from "../shared/environment.js";
 import { systemInfo } from "./terminal.js";
 import { streamChat, sanitizeTitle, generateTitle } from "./providers.js";
+import { listModels, loadModel, supportsModelManagement, unloadModel } from "./localModels.js";
 import { reviewAndRevise } from "./critic.js";
 import { runCommand, getCwd } from "./terminal.js";
-import type { ChatStreamRequest, ProviderConfig, ToolEvent } from "../shared/types.js";
+import type { ChatStreamRequest, LocalModel, ProviderConfig, ToolEvent } from "../shared/types.js";
 import { resolveTheme } from "../shared/types.js";
 import type { Conversation } from "../shared/types.js";
 import { branchTree, childrenOf, hasBranches, rootOf, sharedPrefixLength } from "../shared/branching.js";
@@ -178,7 +188,8 @@ async function runToolLoopTest(pageUrl: string): Promise<{
     terminalTool: false,
     approveCommands: true,
     fileTools: false,
-    approveWrites: true
+    approveWrites: true,
+    reasoningEffort: "off"
   };
 
   const toolEvents: ToolEvent[] = [];
@@ -204,6 +215,154 @@ async function runToolLoopTest(pageUrl: string): Promise<{
  * right: NDJSON instead of SSE, `arguments` as an object instead of a JSON
  * string, and tool results needing `tool_name`. This exercises all three.
  */
+/**
+ * A mock Ollama for the model manager.
+ *
+ * The response shapes here are copied from a live runtime rather than from the
+ * docs: /api/tags carries `capabilities` on any recent version (so residency
+ * and reasoning support come from one call), cloud-served models list a size
+ * of zero because none of their weights are on this machine, and /api/ps is a
+ * separate listing that only knows what is warm.
+ */
+async function runLocalModelTest(): Promise<{
+  models: LocalModel[];
+  loadBody: Record<string, unknown> | null;
+  unloadBody: Record<string, unknown> | null;
+}> {
+  let loadBody: Record<string, unknown> | null = null;
+  let unloadBody: Record<string, unknown> | null = null;
+
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      res.writeHead(200, { "content-type": "application/json" });
+      if (req.url === "/api/tags") {
+        res.end(JSON.stringify({
+          models: [
+            {
+              name: "llama3.2:latest", size: 2019393189,
+              details: { parameter_size: "3.2B", quantization_level: "Q4_K_M" },
+              capabilities: ["completion", "tools"]
+            },
+            {
+              name: "gpt-oss:20b", size: 13780173839,
+              details: { parameter_size: "20.9B", quantization_level: "MXFP4" },
+              capabilities: ["completion", "tools", "thinking"]
+            },
+            {
+              name: "kimi-k2.6:cloud", size: 0,
+              details: { parameter_size: "1T" },
+              capabilities: ["completion", "tools", "thinking"]
+            }
+          ]
+        }));
+        return;
+      }
+      if (req.url === "/api/ps") {
+        res.end(JSON.stringify({
+          models: [{
+            name: "gpt-oss:20b", size: 14000000000, size_vram: 14000000000,
+            expires_at: "2026-09-14T13:03:57-05:00"
+          }]
+        }));
+        return;
+      }
+      if (req.url === "/api/generate") {
+        const parsed = JSON.parse(body) as Record<string, unknown>;
+        if (parsed.keep_alive === 0) unloadBody = parsed;
+        else loadBody = parsed;
+        res.end(JSON.stringify({ model: parsed.model, done: true, done_reason: parsed.keep_alive === 0 ? "unload" : "load" }));
+        return;
+      }
+      res.end("{}");
+    });
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+  const cfg: ProviderConfig = {
+    id: "test-local", kind: "ollama", label: "mock ollama",
+    baseUrl: `http://127.0.0.1:${port}`, models: [], createdAt: Date.now()
+  };
+
+  const models = await listModels(cfg);
+  await loadModel(cfg, "llama3.2:latest", 60);
+  await unloadModel(cfg, "gpt-oss:20b");
+  server.close();
+  return { models, loadBody, unloadBody };
+}
+
+/**
+ * A mock Ollama that reports what it was asked for and answers with reasoning.
+ *
+ * Two things are under test. Reasoning has to reach the UI on a channel of its
+ * own -- spliced into the answer it would read as the model rambling at the
+ * user, and it would be echoed back to the provider next turn as if it had
+ * been said out loud. And `think` has to be absent entirely for a model whose
+ * capability is unknown: a live runtime answers `"granite3.2:8b" does not
+ * support thinking` to `think: true`, so the field is only ever sent where
+ * something authoritative said it would be understood.
+ */
+async function runReasoningTest(opts: {
+  model: string;
+  reasoningEffort: "off" | "low" | "medium" | "high";
+  reasoningSupported?: boolean;
+}): Promise<{ text: string; streamed: string; reasoning: string; body: Record<string, unknown> }> {
+  let seen: Record<string, unknown> = {};
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      try {
+        seen = JSON.parse(body) as Record<string, unknown>;
+      } catch {
+        seen = {};
+      }
+      res.writeHead(200, { "content-type": "application/x-ndjson" });
+      res.write(`${JSON.stringify({ message: { role: "assistant", thinking: "Let me " }, done: false })}\n`);
+      res.write(`${JSON.stringify({ message: { role: "assistant", thinking: "check." }, done: false })}\n`);
+      res.write(`${JSON.stringify({ message: { role: "assistant", content: "ANSWER" }, done: false })}\n`);
+      // Final frame unterminated on purpose: the tail flush has to survive
+      // alongside the reasoning channel, not be traded against it.
+      res.write(JSON.stringify({ message: { role: "assistant", content: "" }, done: true }));
+      res.end();
+    });
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+  const cfg: ProviderConfig = {
+    id: "test-think", kind: "ollama", label: "mock think",
+    baseUrl: `http://127.0.0.1:${port}`, models: [opts.model], createdAt: Date.now()
+  };
+  const req: ChatStreamRequest = {
+    requestId: "rth", providerId: "test-think", model: opts.model, system: "test",
+    messages: [{ role: "user", content: "hi" }], temperature: 1, maxTokens: 64,
+    webSearch: false, browserTools: false, maxToolIterations: 1,
+    searchEngineUrl: "https://duckduckgo.com/?q=%s", forcedTools: [],
+    terminalTool: false, approveCommands: true, fileTools: false, approveWrites: true,
+    reasoningEffort: opts.reasoningEffort, reasoningSupported: opts.reasoningSupported
+  };
+  let text = "";
+  // What the renderer actually paints comes from the chunk callbacks, not the
+  // return value -- so both are kept. Checking only the return value would
+  // pass with reasoning spliced straight into the visible answer.
+  let streamed = "";
+  let reasoning = "";
+  try {
+    text = await streamChat(cfg, req, {
+      onChunk: (d) => { streamed += d; },
+      onReasoning: (d) => { reasoning += d; },
+      onToolEvent: () => {}
+    }, new AbortController().signal);
+  } catch {
+    /* the caller asserts on what arrived */
+  }
+  server.close();
+  return { text, streamed, reasoning, body: seen };
+}
+
 /**
  * A mock Ollama that rate-limits the first N requests before answering.
  *
@@ -247,7 +406,8 @@ async function runRateLimitTest(refusals: number, retryAfter?: string): Promise<
     messages: [{ role: "user", content: "hi" }], temperature: 1, maxTokens: 64,
     webSearch: false, browserTools: false, maxToolIterations: 1,
     searchEngineUrl: "https://duckduckgo.com/?q=%s", forcedTools: [],
-    terminalTool: false, approveCommands: true, fileTools: false, approveWrites: true
+    terminalTool: false, approveCommands: true, fileTools: false, approveWrites: true,
+    reasoningEffort: "off"
   };
   let text = "";
   try {
@@ -354,7 +514,8 @@ async function runOllamaToolLoopTest(pageUrl: string, unterminated = false): Pro
     terminalTool: false,
     approveCommands: true,
     fileTools: false,
-    approveWrites: true
+    approveWrites: true,
+    reasoningEffort: "off"
   };
 
   const toolEvents: ToolEvent[] = [];
@@ -494,7 +655,8 @@ async function runForcedToolTest(pageUrl: string): Promise<{
     terminalTool: false,
     approveCommands: true,
     fileTools: false,
-    approveWrites: true
+    approveWrites: true,
+    reasoningEffort: "off"
   };
 
   let text = "";
@@ -577,7 +739,8 @@ async function runGoogleToolLoopTest(pageUrl: string): Promise<{
     terminalTool: false,
     approveCommands: true,
     fileTools: false,
-    approveWrites: true
+    approveWrites: true,
+    reasoningEffort: "off"
   };
 
   const toolEvents: ToolEvent[] = [];
@@ -773,7 +936,8 @@ async function runCriticTest(
     terminalTool: false,
     approveCommands: true,
     fileTools: false,
-    approveWrites: true
+    approveWrites: true,
+    reasoningEffort: "off"
   };
 
   let finalText = "";
@@ -1394,6 +1558,107 @@ export async function runSelfTest(): Promise<void> {
     check("it gives up rather than retrying forever",
       !rlHopeless.text.includes("RECOVERED") && rlHopeless.requests <= 4,
       `${rlHopeless.requests} requests`);
+
+    console.log("\n[selftest] local model manager");
+    // A large model can take minutes to come off disk, and a chat request to
+    // one that isn't loaded yet just sits there -- silence indistinguishable
+    // from a wedged runtime. The point of all this is to make that wait
+    // visible and deliberate instead.
+    const lm = await runLocalModelTest();
+    check("only runtimes with a residency API offer one",
+      supportsModelManagement({ id: "x", kind: "ollama", label: "", models: [], createdAt: 0 }) &&
+        !supportsModelManagement({ id: "y", kind: "anthropic", label: "", models: [], createdAt: 0 }));
+    check("installed models are listed", lm.models.length === 3, `${lm.models.length}`);
+    check("what is warm is marked warm",
+      lm.models.find((m) => m.name === "gpt-oss:20b")?.loaded === true);
+    check("what is cold is not",
+      lm.models.find((m) => m.name === "llama3.2:latest")?.loaded === false);
+    check("loaded models sort to the top", lm.models[0].name === "gpt-oss:20b", lm.models[0].name);
+    check("a cloud model is not offered local residency",
+      lm.models.find((m) => m.name === "kimi-k2.6:cloud")?.remote === true);
+    check("capabilities ride along with the listing",
+      lm.models.find((m) => m.name === "gpt-oss:20b")?.capabilities?.includes("thinking") === true &&
+        lm.models.find((m) => m.name === "llama3.2:latest")?.capabilities?.includes("thinking") === false);
+    check("a load asks the runtime to keep the model resident",
+      lm.loadBody?.model === "llama3.2:latest" && lm.loadBody?.keep_alive === "60m",
+      JSON.stringify(lm.loadBody));
+    check("a load generates nothing -- it only warms the weights",
+      lm.loadBody?.prompt === "", JSON.stringify(lm.loadBody?.prompt));
+    check("an unload evicts immediately",
+      lm.unloadBody?.model === "gpt-oss:20b" && lm.unloadBody?.keep_alive === 0,
+      JSON.stringify(lm.unloadBody));
+
+    console.log("\n[selftest] reasoning effort");
+    // The control is hidden, not disabled, for a model that can't reason --
+    // an effort setting that silently does nothing is worse than none, since
+    // it implies the setting took.
+    check("a plain chat model offers no effort control",
+      reasoningOptions("openai", "gpt-4o") === null);
+    check("an o-series model does",
+      (reasoningOptions("openai", "o3-mini") ?? []).length > 0);
+    check("a dated Claude snapshot is matched by family, not exact id",
+      (reasoningOptions("anthropic", "claude-sonnet-4-5-20250929") ?? []).length > 0);
+    check("Claude 3.5 is not mistaken for 3.7",
+      reasoningOptions("anthropic", "claude-3-5-sonnet-20241022") === null);
+    check("an OpenRouter id keeps its family through the author prefix",
+      (reasoningOptions("openrouter", "google/gemini-2.5-pro") ?? []).length > 0);
+
+    // Ollama is the one provider where a wrong guess costs the turn rather
+    // than a feature, so its own answer wins over the name in both directions.
+    check("Ollama's capability list overrides a name that looks plain",
+      (reasoningOptions("ollama", "my-custom-merge", ["completion", "thinking"]) ?? []).length > 0);
+    check("...and a name that looks like a reasoner but isn't",
+      reasoningOptions("ollama", "deepseek-r1-distill-fake", ["completion"]) === null);
+    check("gpt-oss gets levels; a boolean thinker gets a switch",
+      (reasoningOptions("ollama", "gpt-oss:20b", ["thinking"]) ?? []).length === 4 &&
+        (reasoningOptions("ollama", "qwq", ["thinking"]) ?? []).length === 2);
+
+    // budget_tokens must be below max_tokens or the request is rejected. The
+    // ceiling moves rather than the budget, so "High" stays high.
+    const think = anthropicThinking("high", 4096);
+    check("a thinking budget raises max_tokens to fit under it",
+      think !== null && think.maxTokens > think.budget,
+      JSON.stringify(think));
+    check("effort off asks for no thinking at all",
+      anthropicThinking("off", 4096) === null);
+
+    check("Gemini 2.5 Pro can't have thinking switched off",
+      googleThinkingBudget("off", "gemini-2.5-pro") > 0);
+    check("Gemini 2.5 Flash can",
+      googleThinkingBudget("off", "gemini-2.5-flash") === 0);
+    check("a Flash budget stays inside its ceiling",
+      googleThinkingBudget("high", "gemini-2.5-flash") <= 24576);
+    check("Gemini 3 takes a level, not a budget",
+      isGemini3("gemini-3-pro-preview") && geminiThinkingLevel("high") === "high");
+
+    check("gpt-5 has a real minimal setting; o-series bottoms out at low",
+      openAIEffort("off", "gpt-5") === "minimal" && openAIEffort("off", "o3") === "low");
+    check("gpt-oss takes a word where other local models take a switch",
+      ollamaThink("low", "gpt-oss:20b") === "low" && ollamaThink("high", "qwq") === true);
+
+    // Reasoning is not the answer. Spliced into `content` it would read as the
+    // model rambling at the user, and it would be echoed back to the provider
+    // on the next turn as if it had been said out loud.
+    const think1 = await runReasoningTest({ model: "qwq", reasoningEffort: "high", reasoningSupported: true });
+    check("reasoning arrives on its own channel",
+      think1.reasoning === "Let me check.", JSON.stringify(think1.reasoning));
+    check("...and stays out of the answer the user sees",
+      think1.streamed === "ANSWER" && think1.text === "ANSWER",
+      JSON.stringify({ streamed: think1.streamed, returned: think1.text }));
+    check("a requested effort reaches the wire",
+      think1.body.think === true, JSON.stringify(think1.body.think));
+
+    // Ollama rejects `think: true` on a model without the capability. Rather
+    // than depend on which disabled spellings a given server tolerates, an
+    // unknown model is sent no field at all -- so "off" here means absent.
+    const think2 = await runReasoningTest({
+      model: "llama3.2", reasoningEffort: "off", reasoningSupported: false
+    });
+    check("a model of unknown capability is sent no think field at all",
+      !("think" in think2.body), JSON.stringify(think2.body.think));
+    check("...and still answers",
+      think2.streamed === "ANSWER" && think2.text === "ANSWER",
+      JSON.stringify({ streamed: think2.streamed, returned: think2.text }));
 
     console.log("\n[selftest] blank page detection");
     // Fixtures are real measurements: raw HTML with script/style stripped,

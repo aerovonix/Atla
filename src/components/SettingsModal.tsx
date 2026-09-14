@@ -306,6 +306,22 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 />
               </Field>
 
+              <Field
+                label="Reasoning effort"
+                hint="The starting point for models that can think before answering. Models that can't ignore it, and any chat can override it from the composer."
+              >
+                <select
+                  value={settings.reasoningEffort}
+                  onChange={(e) => set("reasoningEffort", e.target.value as AppSettings["reasoningEffort"])}
+                  className="w-full px-3 py-2.5 rounded-xl border border-border outline-none text-sm bg-input"
+                >
+                  <option value="off">Off — answer straight away</option>
+                  <option value="low">Low — a brief pass first</option>
+                  <option value="medium">Medium — balanced</option>
+                  <option value="high">High — think hard, slower and pricier</option>
+                </select>
+              </Field>
+
               <Field label="Max response tokens" hint="Upper bound on reply length. Very high values cost more.">
                 <Slider
                   value={settings.maxTokens}

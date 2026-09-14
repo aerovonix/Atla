@@ -12,6 +12,7 @@ import { closeAllPopouts, registerWindowIpc } from "./windows.js";
 import { registerPtyIpc, killAll as killAllPtys } from "./pty.js";
 import { initBrowserBridge } from "./browserBridge.js";
 import { initTerminal, registerTerminalIpc } from "./terminal.js";
+import { listModels, loadModel, modelCapabilities, supportsModelManagement, unloadModel } from "./localModels.js";
 import { registerFileIpc } from "./files.js";
 import { reviewAndRevise } from "./critic.js";
 import { describeError } from "../shared/errors.js";
@@ -20,7 +21,13 @@ import { initWebDash, registerWebDashIpc } from "./webdash.js";
 import { initNotify, registerNotifyIpc } from "./notify.js";
 import { initUpdater, registerUpdaterIpc } from "./updater.js";
 import { initApprovals, registerApprovalIpc, clearApprovals } from "./approvals.js";
-import type { AppState, ChatStreamRequest, FetchModelsResponse, ProviderConfig } from "../shared/types.js";
+import type {
+  AppState,
+  ChatStreamRequest,
+  FetchModelsResponse,
+  LocalModelResult,
+  ProviderConfig
+} from "../shared/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = process.env.NOVA_DEV === "1" || process.env.ATLA_DEV === "1";
@@ -161,6 +168,85 @@ app.whenReady().then(async () => {
     }
   });
 
+  /**
+   * Local model residency.
+   *
+   * Loads are tracked so they can be cancelled: a large model can sit for
+   * minutes, and without a handle on the request the only way out of a
+   * mistaken click is to wait it out. Aborting won't stop Ollama loading the
+   * weights, but it does give the UI its button back, which is the part the
+   * person is actually stuck behind.
+   */
+  const modelLoads = new Map<string, AbortController>();
+  const loadKey = (providerId: string, model: string) => `${providerId} :: ${model}`;
+
+  ipcMain.handle("models:list", async (_e, cfg: ProviderConfig): Promise<LocalModelResult> => {
+    if (!supportsModelManagement(cfg)) return { ok: true, models: [] };
+    try {
+      return { ok: true, models: await listModels(cfg) };
+    } catch (err) {
+      return { ok: false, error: describeError(err) };
+    }
+  });
+
+  ipcMain.handle(
+    "models:capabilities",
+    async (_e, cfg: ProviderConfig, model: string): Promise<string[] | null> => {
+      if (!supportsModelManagement(cfg)) return null;
+      try {
+        return await modelCapabilities(cfg, model);
+      } catch {
+        // An unreachable server or an older one both mean "no answer", and the
+        // caller already falls back to guessing from the name.
+        return null;
+      }
+    }
+  );
+
+  ipcMain.handle(
+    "models:load",
+    async (
+      _e,
+      cfg: ProviderConfig,
+      model: string,
+      keepAliveMinutes: number
+    ): Promise<{ ok: boolean; error?: string }> => {
+      const key = loadKey(cfg.id, model);
+      modelLoads.get(key)?.abort();
+      const controller = new AbortController();
+      modelLoads.set(key, controller);
+      try {
+        await loadModel(cfg, model, keepAliveMinutes, controller.signal);
+        return { ok: true };
+      } catch (err) {
+        if (controller.signal.aborted) return { ok: false, error: "Cancelled." };
+        return { ok: false, error: describeError(err) };
+      } finally {
+        if (modelLoads.get(key) === controller) modelLoads.delete(key);
+      }
+    }
+  );
+
+  ipcMain.handle(
+    "models:unload",
+    async (_e, cfg: ProviderConfig, model: string): Promise<{ ok: boolean; error?: string }> => {
+      // A load still in flight has to go first, or it finishes after the
+      // unload and puts the model straight back.
+      modelLoads.get(loadKey(cfg.id, model))?.abort();
+      try {
+        await unloadModel(cfg, model);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: describeError(err) };
+      }
+    }
+  );
+
+  ipcMain.handle("models:cancel-load", (_e, providerId: string, model: string) => {
+    modelLoads.get(loadKey(providerId, model))?.abort();
+    return true;
+  });
+
   ipcMain.handle(
     "chat:generate-title",
     async (_e, args: { providerId: string; model: string; transcript: string }): Promise<{ ok: boolean; title?: string; error?: string }> => {
@@ -232,6 +318,7 @@ app.whenReady().then(async () => {
         req,
         {
           onChunk: (delta) => send({ type: "chunk", requestId: req.requestId, delta }),
+          onReasoning: (delta) => send({ type: "reasoning", requestId: req.requestId, delta }),
           onToolEvent: (evt) => send({ type: "tool", requestId: req.requestId, event: evt })
         },
         controller.signal

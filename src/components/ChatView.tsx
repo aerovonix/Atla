@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../state/store";
 import { useBrowserStore } from "../state/browserStore";
 import { useTerminalStore } from "../state/terminalStore";
+import { useLocalModels } from "../state/localModelStore";
 import { useCanvasStore } from "../state/canvasStore";
 import { Composer, type ComposerDraft } from "./Composer";
 import { MessageContent, StreamingContent, AttachmentList } from "./MessageBubble";
@@ -34,7 +35,7 @@ import {
 import { SpeedControl } from "./SpeedControl";
 import { AtlaMark } from "./AtlaMark";
 import { PROVIDER_LABELS } from "../../shared/types";
-import type { ChatAttachment, ChatMessage, ToolEvent } from "../../shared/types";
+import type { ChatAttachment, ChatMessage, ProviderConfig, ToolEvent } from "../../shared/types";
 import {
   describeGroup,
   describeToolEvent,
@@ -47,6 +48,99 @@ import {
 import { localDayKey, pickGreeting, shouldUseWeekday } from "../../shared/greetings";
 import { branchTree } from "../../shared/branching";
 
+/** Bytes, at the coarseness a model size is actually read at. */
+function formatSize(n: number): string {
+  if (!n) return "";
+  const gb = n / 1024 ** 3;
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(n / 1024 ** 2)} MB`;
+}
+
+/** How long a manually started model stays resident. Long enough to be worth the wait. */
+const KEEP_ALIVE_MINUTES = 60;
+
+/**
+ * Start and stop a model on a local runtime.
+ *
+ * A large model can take minutes to come off disk, and until it has, a chat
+ * request to it just sits there — silence that is indistinguishable from the
+ * runtime having wedged. Doing it here turns that wait into something visible
+ * and deliberate, before a message depends on it, and gives back the other
+ * half: evicting a model that is holding VRAM the next one needs.
+ */
+function ResidencyButton({ provider, model }: { provider: ProviderConfig; model: string }) {
+  const entry = useLocalModels((s) => s.models[provider.id]?.find((m) => m.name === model));
+  const busy = useLocalModels((s) => s.busy[`${provider.id} :: ${model}`]);
+  const load = useLocalModels((s) => s.load);
+  const unload = useLocalModels((s) => s.unload);
+  const cancel = useLocalModels((s) => s.cancel);
+
+  // Absent from the list means the list hasn't arrived, or the runtime is
+  // down. Either way there is nothing honest to offer yet. A cloud-served
+  // model has no weights on this machine at all, so there is nothing to
+  // start or stop even though it is listed.
+  if (!entry || entry.remote) return null;
+
+  if (busy === "load") {
+    return (
+      <span className="flex items-center gap-1.5 shrink-0">
+        <ThinkingDots />
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            cancel(provider.id, model);
+          }}
+          className="text-[11px] text-secondary hover:text-text px-1.5 py-0.5 rounded"
+          title="Stop waiting. The runtime may finish loading anyway."
+        >
+          Cancel
+        </button>
+      </span>
+    );
+  }
+  if (busy === "unload") return <ThinkingDots />;
+
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        if (entry.loaded) void unload(provider, model);
+        else void load(provider, model, KEEP_ALIVE_MINUTES);
+      }}
+      className="text-[11px] px-1.5 py-0.5 rounded border border-border text-secondary hover:bg-hover hover:text-text shrink-0"
+      title={
+        entry.loaded
+          ? "Unload — frees the memory it is holding"
+          : `Load now and keep it resident for ${KEEP_ALIVE_MINUTES} minutes`
+      }
+    >
+      {entry.loaded ? "Unload" : "Load"}
+    </button>
+  );
+}
+
+/** A filled dot means the weights are in memory and the next message starts immediately. */
+function ResidencyDot({ provider, model }: { provider: ProviderConfig; model: string }) {
+  const entry = useLocalModels((s) => s.models[provider.id]?.find((m) => m.name === model));
+  if (!entry) return null;
+  if (entry.remote) {
+    return (
+      <span
+        className="w-1.5 h-1.5 rounded-full shrink-0 border"
+        style={{ borderColor: "var(--border)" }}
+        title="Served from the cloud — nothing loads on this machine"
+      />
+    );
+  }
+  const detail = [entry.parameterSize, formatSize(entry.size)].filter(Boolean).join(" · ");
+  return (
+    <span
+      className="w-1.5 h-1.5 rounded-full shrink-0"
+      style={{ backgroundColor: entry.loaded ? "var(--accent)" : "var(--border)" }}
+      title={entry.loaded ? `Loaded${detail ? ` — ${detail}` : ""}` : `Not loaded${detail ? ` — ${detail}` : ""}`}
+    />
+  );
+}
+
 function ModelPicker({ conversationId }: { conversationId: string }) {
   const providers = useStore((s) => s.providers);
   const conv = useStore((s) => s.conversations.find((c) => c.id === conversationId));
@@ -55,6 +149,22 @@ function ModelPicker({ conversationId }: { conversationId: string }) {
 
   const activeProvider = providers.find((p) => p.id === conv?.providerId) ?? providers[0];
   const activeModel = conv?.model || activeProvider?.defaultModel || activeProvider?.models[0];
+
+  const refresh = useLocalModels((s) => s.refresh);
+  const localErrors = useLocalModels((s) => s.errors);
+  const local = providers.filter((p) => p.kind === "ollama");
+
+  // Residency changes without Atla touching it — the runtime evicts on its own
+  // timer, and another client can load something. Polling only while the menu
+  // is open keeps that current without a background timer running all day.
+  useEffect(() => {
+    if (!open || local.length === 0) return;
+    const tick = () => local.forEach((p) => void refresh(p));
+    tick();
+    const timer = setInterval(tick, 4000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, local.map((p) => p.id).join(","), refresh]);
 
   if (providers.length === 0) return <span className="text-xs text-secondary">No providers configured</span>;
 
@@ -81,20 +191,31 @@ function ModelPicker({ conversationId }: { conversationId: string }) {
                 {p.models.length === 0 && (
                   <div className="px-2 py-1.5 text-xs text-secondary">No models — auto-detect in Settings</div>
                 )}
+                {p.kind === "ollama" && localErrors[p.id] && (
+                  <div className="px-2 py-1.5 text-[11px] text-secondary leading-snug">
+                    Can&rsquo;t reach the runtime: {localErrors[p.id]}
+                  </div>
+                )}
                 {p.models.map((m) => (
-                  <button
+                  <div
                     key={m}
-                    onClick={() => {
-                      setConversationModel(conversationId, p.id, m);
-                      setOpen(false);
-                    }}
-                    className="w-full text-left px-2 py-1.5 rounded-lg text-sm flex items-center justify-between hover:bg-hover"
+                    className="w-full px-2 py-1.5 rounded-lg text-sm flex items-center gap-2 hover:bg-hover"
                   >
-                    <span className="truncate">{m}</span>
-                    {activeProvider?.id === p.id && activeModel === m && (
-                      <CheckIcon width={14} height={14} style={{ color: "var(--accent)" }} />
-                    )}
-                  </button>
+                    <button
+                      onClick={() => {
+                        setConversationModel(conversationId, p.id, m);
+                        setOpen(false);
+                      }}
+                      className="flex-1 min-w-0 flex items-center gap-2 text-left"
+                    >
+                      {p.kind === "ollama" && <ResidencyDot provider={p} model={m} />}
+                      <span className="truncate">{m}</span>
+                      {activeProvider?.id === p.id && activeModel === m && (
+                        <CheckIcon width={14} height={14} className="shrink-0" style={{ color: "var(--accent)" }} />
+                      )}
+                    </button>
+                    {p.kind === "ollama" && <ResidencyButton provider={p} model={m} />}
+                  </div>
                 ))}
               </div>
             ))}
@@ -576,9 +697,42 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
+/**
+ * Whether a value changed in the last moment.
+ *
+ * Reasoning is the only signal that the model is thinking rather than
+ * answering, and there is no event that says it stopped — so "is it still
+ * arriving?" has to be measured. A short window reads as live without the
+ * header flickering between tokens.
+ */
+function useRecentlyGrew(value: string, windowMs = 900): boolean {
+  const [fresh, setFresh] = useState(false);
+  const last = useRef(value);
+  useEffect(() => {
+    if (value === last.current) return;
+    last.current = value;
+    setFresh(true);
+    const timer = setTimeout(() => setFresh(false), windowMs);
+    return () => clearTimeout(timer);
+  }, [value, windowMs]);
+  return fresh;
+}
+
 /** The body of an assistant turn: text and tool cards, in the order they happened. */
 function AssistantBody({ message, streaming }: { message: ChatMessage; streaming: boolean }) {
   const { thinking, answer, thinkingOpen } = useMemo(() => splitThinking(message.content), [message.content]);
+
+  // Two sources, one block. Providers that expose a reasoning channel put it
+  // in `reasoning`; models that don't write <think> into the body instead, and
+  // splitThinking pulls that back out. A model could in principle do both, so
+  // they are concatenated rather than one winning.
+  const reasoning = message.reasoning ?? "";
+  const thoughts = useMemo(
+    () => [reasoning, thinking].filter(Boolean).join("\n\n"),
+    [reasoning, thinking]
+  );
+  const growing = useRecentlyGrew(reasoning);
+  const thinkingActive = streaming && (thinkingOpen || growing);
 
   // Tool offsets were recorded against the raw content, so pulling the
   // reasoning out shifts them. Reasoning models put their <think> block at the
@@ -605,9 +759,7 @@ function AssistantBody({ message, streaming }: { message: ChatMessage; streaming
 
   return (
     <>
-      {(thinking || (streaming && thinkingOpen)) && (
-        <ThinkingBlock text={thinking} active={streaming && thinkingOpen} />
-      )}
+      {(thoughts || thinkingActive) && <ThinkingBlock text={thoughts} active={thinkingActive} />}
       {segments.map((seg, i) =>
         seg.kind === "tools" ? (
           <ToolRunCard key={`tools-${seg.key}`} group={seg.group} events={seg.events} />
@@ -621,7 +773,7 @@ function AssistantBody({ message, streaming }: { message: ChatMessage; streaming
       )}
       {/* Nothing to show yet, or the last thing was a tool call — either way
           the model is still working, so keep the indicator alive. */}
-      {streaming && !thinkingOpen && (segments.length === 0 || endsOnTool) && <TypingDots />}
+      {streaming && !thinkingActive && (segments.length === 0 || endsOnTool) && <TypingDots />}
       {message.reviewing && (
         <div className="flex items-center gap-2 pt-1.5 text-[12px] text-secondary">
           <ThinkingDots />
@@ -655,13 +807,32 @@ function TypingDots() {
   );
 }
 
+/** The last line with anything on it — what the model is thinking about now. */
+function latestLine(text: string): string {
+  const lines = text.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].replace(/^[#>\s*-]+/, "").trim();
+    if (line) return line;
+  }
+  return "";
+}
+
 /**
- * Reasoning models put their scratch work in <think> tags. It's worth keeping
- * — it's often where the actual reasoning is — but it isn't the answer, so it
- * gets its own block, collapsed by default.
+ * The model's reasoning, in a block of its own.
+ *
+ * Two things arrive here: a provider's reasoning channel (Anthropic's thinking
+ * blocks, Gemini's thought parts, Ollama's `thinking` field, OpenRouter's
+ * `reasoning` delta) and the <think> tags that models without such a channel
+ * write inline. Either way it isn't the answer, so it is kept out of the reply
+ * and collapsed by default.
+ *
+ * While it is arriving the header carries the newest line. A collapsed block
+ * that says only "Thinking…" is the same as bare dots — the point of showing
+ * reasoning at all is that you can see it move without opening anything.
  */
 function ThinkingBlock({ text, active }: { text: string; active: boolean }) {
   const [open, setOpen] = useState(false);
+  const preview = useMemo(() => (active ? latestLine(text) : ""), [active, text]);
   if (!text && !active) return null;
 
   return (
@@ -669,22 +840,32 @@ function ThinkingBlock({ text, active }: { text: string; active: boolean }) {
       <button
         onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-left hover:bg-hover transition-colors"
+        aria-expanded={open}
       >
         {active ? <ThinkingDots /> : <ToolIcon width={13} height={13} className="text-secondary shrink-0" />}
-        <span className="font-medium">{active ? "Thinking…" : "Thought it through"}</span>
-        <div className="flex-1" />
+        <span className="font-medium shrink-0">{active ? "Thinking…" : "Thought it through"}</span>
+        {preview && !open && (
+          <span className="min-w-0 flex-1 truncate text-[12px] text-secondary" title={preview}>
+            {preview}
+          </span>
+        )}
+        {!(preview && !open) && <div className="flex-1" />}
         {text && (
-          <span className="flex items-center gap-1 text-[12px] text-secondary">
+          <span className="flex items-center gap-1 text-[12px] text-secondary shrink-0">
             {open ? "Hide" : "View details"}
             <ChevronDownIcon open={open} width={10} height={10} />
           </span>
         )}
       </button>
       {open && text && (
-        <div className="border-t border-border px-3 py-2.5">
-          <pre className="text-[12px] leading-5 whitespace-pre-wrap break-words text-secondary max-h-72 overflow-y-auto">
-            {text}
-          </pre>
+        <div className="border-t border-border px-3 py-1 max-h-80 overflow-y-auto">
+          {/* Markdown, because reasoning is written as prose: models number
+              their steps, quote code, and use headings, and a <pre> renders
+              all of that as literal asterisks and backticks. Dimmed and a
+              size down so it never competes with the answer below it. */}
+          <div className="text-[13px] opacity-75">
+            <MessageContent content={text} streaming={active} />
+          </div>
         </div>
       )}
     </div>

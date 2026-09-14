@@ -14,7 +14,9 @@ import { DEFAULT_SETTINGS, SETTINGS_VERSION } from "../../shared/types";
 import { parseForcedTools } from "../../shared/toolCatalog";
 import { childrenOf } from "../../shared/branching";
 import { buildEnvironmentPrompt, type SystemInfo } from "../../shared/environment";
+import { reasoningOptions, type ReasoningEffort } from "../../shared/reasoning";
 import { useTerminalStore } from "./terminalStore";
+import { useLocalModels } from "./localModelStore";
 
 interface StreamState {
   conversationId: string;
@@ -65,6 +67,8 @@ interface AtlaStore {
     flag: "webSearch" | "browserTools" | "terminalTool" | "fileTools",
     value: boolean
   ) => void;
+  /** Per-conversation reasoning effort. Clearing it falls back to the setting. */
+  setReasoningEffort: (conversationId: string, effort: ReasoningEffort) => void;
 
   sendMessage: (conversationId: string, text: string, attachments: ChatAttachment[]) => void;
   stopStreaming: (conversationId: string) => void;
@@ -110,6 +114,13 @@ function childCount(conversations: Conversation[], id: string): number {
  * the display can actually show.
  */
 const pendingDeltas = new Map<string, string>();
+/**
+ * Reasoning arrives on its own channel and is buffered on its own, for the
+ * same reason the answer is: a thinking model emits it a token at a time, and
+ * a store write per token re-renders the transcript far faster than anyone can
+ * read it. Both maps drain on the same frame tick.
+ */
+const pendingReasoning = new Map<string, string>();
 let flushHandle: number | null = null;
 
 /**
@@ -120,24 +131,37 @@ let flushHandle: number | null = null;
  * otherwise measure against text that hasn't landed yet.
  */
 function flushDeltas(set: (fn: (s: AtlaStore) => Partial<AtlaStore>) => void) {
-  if (pendingDeltas.size === 0) return;
+  if (pendingDeltas.size === 0 && pendingReasoning.size === 0) return;
   const batch = new Map(pendingDeltas);
+  const thoughts = new Map(pendingReasoning);
   pendingDeltas.clear();
+  pendingReasoning.clear();
   set((st) => {
     const targets = new Map<string, string>();
+    const reasoning = new Map<string, string>();
     for (const [requestId, delta] of batch) {
       const target = st.streaming[requestId];
       if (target) targets.set(target.assistantMessageId, (targets.get(target.assistantMessageId) ?? "") + delta);
     }
-    if (targets.size === 0) return {};
+    for (const [requestId, delta] of thoughts) {
+      const target = st.streaming[requestId];
+      if (target) reasoning.set(target.assistantMessageId, (reasoning.get(target.assistantMessageId) ?? "") + delta);
+    }
+    if (targets.size === 0 && reasoning.size === 0) return {};
     return {
       conversations: st.conversations.map((c) => {
-        if (!c.messages.some((m) => targets.has(m.id))) return c;
+        if (!c.messages.some((m) => targets.has(m.id) || reasoning.has(m.id))) return c;
         return {
           ...c,
           messages: c.messages.map((m) => {
             const delta = targets.get(m.id);
-            return delta === undefined ? m : { ...m, content: m.content + delta };
+            const thought = reasoning.get(m.id);
+            if (delta === undefined && thought === undefined) return m;
+            return {
+              ...m,
+              ...(delta === undefined ? {} : { content: m.content + delta }),
+              ...(thought === undefined ? {} : { reasoning: (m.reasoning ?? "") + thought })
+            };
           })
         };
       })
@@ -347,6 +371,12 @@ export const useStore = create<AtlaStore>((set, get) => {
     const terminalTool = conv?.terminalTool ?? settings.terminalToolEnabled;
     const fileTools = conv?.fileTools ?? settings.fileToolsEnabled;
     const forcedTools = opts.forcedTools ?? [];
+    // The renderer is the only side that has asked the runtime what this model
+    // can do, so it decides. Undefined means "no better information than the
+    // name", which is what the adapters fall back on.
+    const caps = useLocalModels.getState().capabilitiesFor(provider.id, model);
+    const reasoningSupported =
+      caps === undefined ? undefined : reasoningOptions(provider.kind, model, caps) !== null;
     set((st) => ({ streaming: { ...st.streaming, [requestId]: { conversationId, assistantMessageId } } }));
 
     const wire = history.map(toWireMessage);
@@ -377,6 +407,8 @@ export const useStore = create<AtlaStore>((set, get) => {
       approveCommands: settings.commandApproval,
       fileTools,
       approveWrites: settings.fileWriteApproval,
+      reasoningEffort: conv?.reasoningEffort ?? settings.reasoningEffort,
+      reasoningSupported,
       desktop: settings.desktopEnabled
         ? {
             enabled: true,
@@ -613,6 +645,14 @@ export const useStore = create<AtlaStore>((set, get) => {
           if (evt.type === "chunk") {
             // Buffered, not applied. The flush below owns the store write.
             pendingDeltas.set(evt.requestId, (pendingDeltas.get(evt.requestId) ?? "") + evt.delta);
+            if (flushHandle === null) {
+              flushHandle = requestAnimationFrame(() => {
+                flushHandle = null;
+                flushDeltas(set);
+              });
+            }
+          } else if (evt.type === "reasoning") {
+            pendingReasoning.set(evt.requestId, (pendingReasoning.get(evt.requestId) ?? "") + evt.delta);
             if (flushHandle === null) {
               flushHandle = requestAnimationFrame(() => {
                 flushHandle = null;
@@ -871,6 +911,15 @@ export const useStore = create<AtlaStore>((set, get) => {
     setConversationFlag: (conversationId, flag, value) => {
       set((s) => ({
         conversations: s.conversations.map((c) => (c.id === conversationId ? { ...c, [flag]: value } : c))
+      }));
+      scheduleSaveState(get);
+    },
+
+    setReasoningEffort: (conversationId, effort) => {
+      set((s) => ({
+        conversations: s.conversations.map((c) =>
+          c.id === conversationId ? { ...c, reasoningEffort: effort } : c
+        )
       }));
       scheduleSaveState(get);
     },
