@@ -68,6 +68,17 @@ export interface AtlaBridge {
     onRequest: (cb: (payload: { id: string; request: DashRequest }) => void) => () => void;
     reply: (id: string, payload: unknown) => void;
   };
+  pty: {
+    create: (opts: { cwd?: string; cols?: number; rows?: number }) => Promise<string | null>;
+    write: (id: string, data: string) => Promise<boolean>;
+    resize: (id: string, cols: number, rows: number) => Promise<boolean>;
+    kill: (id: string) => Promise<boolean>;
+    list: () => Promise<{ id: string; title: string; cwd: string; exited: boolean }[]>;
+    scrollback: (id: string) => Promise<string>;
+    unavailable: () => Promise<string | null>;
+    onData: (cb: (e: { id: string; data: string }) => void) => () => void;
+    onExit: (cb: (e: { id: string; code: number }) => void) => () => void;
+  };
   windows: {
     popOut: (pane: PaneKind) => Promise<boolean>;
     dock: (pane: PaneKind) => Promise<boolean>;

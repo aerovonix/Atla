@@ -84,6 +84,28 @@ const api = {
     },
     reply: (id: string, payload: unknown) => ipcRenderer.send(`dash:reply:${id}`, payload)
   },
+  pty: {
+    create: (opts: { cwd?: string; cols?: number; rows?: number }): Promise<string | null> =>
+      ipcRenderer.invoke("pty:create", opts),
+    write: (id: string, data: string): Promise<boolean> => ipcRenderer.invoke("pty:write", id, data),
+    resize: (id: string, cols: number, rows: number): Promise<boolean> =>
+      ipcRenderer.invoke("pty:resize", id, cols, rows),
+    kill: (id: string): Promise<boolean> => ipcRenderer.invoke("pty:kill", id),
+    list: (): Promise<{ id: string; title: string; cwd: string; exited: boolean }[]> =>
+      ipcRenderer.invoke("pty:list"),
+    scrollback: (id: string): Promise<string> => ipcRenderer.invoke("pty:scrollback", id),
+    unavailable: (): Promise<string | null> => ipcRenderer.invoke("pty:unavailable"),
+    onData: (cb: (e: { id: string; data: string }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, p: { id: string; data: string }) => cb(p);
+      ipcRenderer.on("pty:data", listener);
+      return () => ipcRenderer.removeListener("pty:data", listener);
+    },
+    onExit: (cb: (e: { id: string; code: number }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, p: { id: string; code: number }) => cb(p);
+      ipcRenderer.on("pty:exit", listener);
+      return () => ipcRenderer.removeListener("pty:exit", listener);
+    }
+  },
   windows: {
     popOut: (pane: string): Promise<boolean> => ipcRenderer.invoke("windows:pop-out", pane),
     dock: (pane: string): Promise<boolean> => ipcRenderer.invoke("windows:dock", pane),
