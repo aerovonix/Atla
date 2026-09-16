@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { promptFor, useStore } from "../state/store";
+import { useStore } from "../state/store";
 import { useBrowserStore } from "../state/browserStore";
 import { useTerminalStore } from "../state/terminalStore";
 import { useLocalModels } from "../state/localModelStore";
@@ -226,73 +226,6 @@ function ModelPicker({ conversationId }: { conversationId: string }) {
   );
 }
 
-/**
- * The system prompt as it was actually sent, for one turn.
- *
- * The summary line at the top is the point. "Is my custom instruction text in
- * there?" is the question people actually have, and answering it by asking
- * someone to read ten kilobytes of prose and spot an absence is not an answer.
- * The prompt itself is underneath for when the summary isn't enough.
- */
-function SystemPromptView({ prompt, onClose }: { prompt: string; onClose: () => void }) {
-  const settings = useStore((s) => s.settings);
-  const [copied, setCopied] = useState(false);
-
-  const custom = settings.customInstructions?.trim() ?? "";
-  const override = settings.systemPromptOverride?.trim() ?? "";
-  const checks: { label: string; set: boolean; present: boolean }[] = [
-    { label: "Custom instructions", set: custom.length > 0, present: custom.length > 0 && prompt.includes(custom) },
-    { label: "System prompt override", set: override.length > 0, present: override.length > 0 && prompt.includes(override) }
-  ];
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(prompt);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard permission is the user's to grant; failing quietly is fine.
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" role="dialog" aria-modal>
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative w-full max-w-3xl max-h-[80vh] flex flex-col rounded-2xl border border-border bg-bg shadow-2xl">
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-border shrink-0">
-          <span className="font-medium text-sm">System prompt for this turn</span>
-          <span className="text-[11px] text-secondary">{prompt.length.toLocaleString()} characters</span>
-          <div className="flex-1" />
-          <button onClick={copy} className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg text-secondary hover:bg-hover">
-            {copied ? <CheckIcon width={12} height={12} /> : <CopyIcon width={12} height={12} />}
-            {copied ? "Copied" : "Copy"}
-          </button>
-          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-secondary hover:bg-hover">
-            <CloseIcon width={14} height={14} />
-          </button>
-        </div>
-        <div className="px-4 py-2.5 border-b border-border shrink-0 space-y-1">
-          {checks.map((c) => (
-            <div key={c.label} className="flex items-center gap-2 text-[12px]">
-              <span
-                className="w-1.5 h-1.5 rounded-full shrink-0"
-                style={{ backgroundColor: !c.set ? "var(--border)" : c.present ? "var(--accent)" : "#ef4444" }}
-              />
-              <span className="text-secondary">
-                {c.label}:{" "}
-                {!c.set ? "not set" : c.present ? "included" : "SET IN SETTINGS BUT MISSING FROM THIS PROMPT"}
-              </span>
-            </div>
-          ))}
-        </div>
-        <pre className="flex-1 overflow-auto px-4 py-3 text-[12px] leading-5 whitespace-pre-wrap break-words text-secondary">
-          {prompt}
-        </pre>
-      </div>
-    </div>
-  );
-}
-
 function MessageMenu({
   conversationId,
   message,
@@ -303,17 +236,12 @@ function MessageMenu({
   onRestoreDraft: (draft: ComposerDraft) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [promptOpen, setPromptOpen] = useState(false);
   const rewindTo = useStore((s) => s.rewindTo);
   const branchFrom = useStore((s) => s.branchFrom);
   const deleteMessage = useStore((s) => s.deleteMessage);
-  const sentPrompt = promptFor(message.id);
 
   return (
     <div className="relative">
-      {promptOpen && sentPrompt !== null && (
-        <SystemPromptView prompt={sentPrompt} onClose={() => setPromptOpen(false)} />
-      )}
       <button
         onClick={() => setOpen((o) => !o)}
         className="bevel bevel-sm w-7 h-7 rounded-full flex items-center justify-center"
@@ -358,26 +286,6 @@ function MessageMenu({
                 </span>
               </span>
             </button>
-            {message.role === "assistant" && (
-              <button
-                onClick={() => {
-                  setPromptOpen(true);
-                  setOpen(false);
-                }}
-                disabled={sentPrompt === null}
-                className="w-full text-left px-3 py-2 text-sm hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed flex items-start gap-2"
-              >
-                <ToolIcon width={14} height={14} className="mt-0.5 shrink-0" />
-                <span>
-                  View system prompt
-                  <span className="block text-[11px] text-secondary">
-                    {sentPrompt === null
-                      ? "Only kept for turns sent this session"
-                      : "Exactly what was sent with this turn"}
-                  </span>
-                </span>
-              </button>
-            )}
             <div className="h-px my-1 bg-border" />
             <button
               onClick={() => {
