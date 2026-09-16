@@ -169,6 +169,40 @@ function flushDeltas(set: (fn: (s: AtlaStore) => Partial<AtlaStore>) => void) {
   });
 }
 
+/**
+ * The system prompt actually sent with each assistant turn.
+ *
+ * Deliberately outside the store and never persisted. It is roughly 10 KB per
+ * turn, so writing it into the conversation would multiply the size of the
+ * state file for something nobody reads twice — and it answers a question that
+ * is only ever asked about the current session: "what did you actually send?"
+ *
+ * That question needed answering because reasoning about it from the outside
+ * failed. Custom instructions are in the settings file, the code that appends
+ * them is in the shipped bundle, and the model obeys them when the same prompt
+ * is sent by hand — yet replies arrive as though the instructions were never
+ * there. Somewhere between those facts the prompt loses them, and guessing
+ * which link is at fault is what this replaces.
+ */
+const sentPrompts = new Map<string, string>();
+
+/** Keeps the map from growing without bound in a long session. */
+const SENT_PROMPT_LIMIT = 40;
+
+function rememberPrompt(messageId: string, prompt: string) {
+  sentPrompts.set(messageId, prompt);
+  while (sentPrompts.size > SENT_PROMPT_LIMIT) {
+    const oldest = sentPrompts.keys().next().value;
+    if (oldest === undefined) break;
+    sentPrompts.delete(oldest);
+  }
+}
+
+/** The prompt sent with this turn, or null if it was a previous session. */
+export function promptFor(messageId: string): string | null {
+  return sentPrompts.get(messageId) ?? null;
+}
+
 /** Cleanup for the cross-window settings subscription, if one is open. */
 let settingsUnsubscribe: (() => void) | null = null;
 
@@ -387,22 +421,27 @@ export const useStore = create<AtlaStore>((set, get) => {
     const wire = history.map(toWireMessage);
     if (opts.extraWire) wire.push({ ...opts.extraWire, imageDataUrls: undefined });
 
+    const system = buildSystemPrompt(settings, {
+      webSearch,
+      browserTools,
+      terminalTool,
+      fileTools,
+      desktopTools: settings.desktopEnabled,
+      forcedTools,
+      systemInfo: get().systemInfo,
+      // The terminal store is the live one — the model can cd itself, and
+      // the hydration value only stands in before the pane has been opened.
+      cwd: useTerminalStore.getState().cwd || get().systemCwd
+    });
+    // Recorded before the send, so it reflects what went out even if the
+    // request fails.
+    rememberPrompt(assistantMessageId, system);
+
     window.atla.chat.start({
       requestId,
       providerId: provider.id,
       model,
-      system: buildSystemPrompt(settings, {
-        webSearch,
-        browserTools,
-        terminalTool,
-        fileTools,
-        desktopTools: settings.desktopEnabled,
-        forcedTools,
-        systemInfo: get().systemInfo,
-        // The terminal store is the live one — the model can cd itself, and
-        // the hydration value only stands in before the pane has been opened.
-        cwd: useTerminalStore.getState().cwd || get().systemCwd
-      }),
+      system,
       messages: wire,
       temperature: settings.temperature,
       maxTokens: settings.maxTokens,
