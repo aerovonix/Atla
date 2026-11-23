@@ -15,7 +15,7 @@ import {
   FILE_TOOLS
 } from "./tools.js";
 import { applyEdit, readFileText, writeFileText } from "./files.js";
-import { htmlToText, linksOf, titleOf } from "./fetcher.js";
+import { fetchPage, htmlToText, linksOf, resultsFrom, titleOf } from "./fetcher.js";
 import { clampText, stripMarkdown } from "../shared/plaintext.js";
 import {
   buildIndex,
@@ -1703,6 +1703,63 @@ export async function runSelfTest(): Promise<void> {
     // The limit has to sit in the gap the measurements found, or it is guesswork again.
     check("the limit sits between a stripped shell and the smallest real page",
       BLANK_PAGE_LIMIT > 45 && BLANK_PAGE_LIMIT < 142, String(BLANK_PAGE_LIMIT));
+
+    console.log("\n[selftest] web search");
+    // The bug this guards: DuckDuckGo returns every result as a link to
+    // itself, `duckduckgo.com/l/?uddg=<real-url>`. Searching used to scrape
+    // every anchor and then drop anything whose hostname was the engine's --
+    // which is all of them -- so a page of ten results arrived as nothing and
+    // the model reported that the web was empty.
+    const ddg = `
+      <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fnpr.org%2Fnews&amp;rut=9">NPR News</a>
+      <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fcnn.com%2F">CNN</a>
+      <a class="result-link" href="https://example.com/direct">Direct</a>
+      <a class="badge--ad" href="//duckduckgo.com/y.js?ad=1">An ad</a>
+      <a href="/settings">Settings</a>
+      <a href="/?kl=us-en">All Regions</a>`;
+    const found = resultsFrom(ddg, "https://html.duckduckgo.com/html/");
+    check("search results survive the engine's own redirect wrapper",
+      found.length === 3, `${found.length} results`);
+    check("the wrapped target is unwrapped to the real URL",
+      found[0]?.url === "https://npr.org/news", found[0]?.url ?? "none");
+    check("a direct result link is kept as-is",
+      found.some((r) => r.url === "https://example.com/direct"));
+    check("engine furniture and ads are not results",
+      !found.some((r) => /duckduckgo\.com|\/settings|kl=us-en/.test(r.url)));
+    check("a results page with nothing on it yields nothing",
+      resultsFrom("<a href='/settings'>Settings</a>", "https://html.duckduckgo.com/html/").length === 0);
+
+    // An error page is not content. This used to pass any HTML body through
+    // whatever its status, so a 429 reached the model as a pile of nav links:
+    // it would report an empty search and retry, never learning it had been
+    // rate limited.
+    const errServer = http.createServer((req, res) => {
+      const code = Number((req.url ?? "/200").slice(1)) || 200;
+      const headers: Record<string, string> = { "content-type": "text/html" };
+      if (code === 429) headers["retry-after"] = "30";
+      res.writeHead(code, headers);
+      res.end('<html><title>Nope</title><body><a href="https://a.example">A</a></body></html>');
+    });
+    await new Promise<void>((resolve) => errServer.listen(0, "127.0.0.1", resolve));
+    const errPort = (errServer.address() as { port: number }).port;
+    const said = async (code: number): Promise<string> => {
+      try {
+        const page = await fetchPage(`http://127.0.0.1:${errPort}/${code}`);
+        return `parsed ${page.links.length} links as content`;
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+    };
+    const limited = await said(429);
+    check("a rate-limited page says so instead of being parsed",
+      /rate limited/i.test(limited) && /429/.test(limited), limited);
+    check("a long Retry-After is reported, not slept through", /30s/.test(limited), limited);
+    check("a blocked page says it was blocked", /refused|blocking/i.test(await said(403)));
+    check("a 404 is not content", /nothing at that URL/i.test(await said(404)));
+    const ok200 = await said(200);
+    check("a healthy page with the same body still reads fine",
+      ok200 === "parsed 1 links as content", ok200);
+    errServer.close();
 
     console.log("\n[selftest] pty sessions");
     const reason = ptyUnavailableReason();

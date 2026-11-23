@@ -13,6 +13,7 @@ import {
 import { collectTools, executeTool, type ToolContext, type ToolDef } from "./tools.js";
 import { requestApproval } from "./approvals.js";
 import { getCwd } from "./terminal.js";
+import { fetchWithRetry } from "./retry.js";
 
 export interface StreamHandlers {
   onChunk: (delta: string) => void;
@@ -85,9 +86,18 @@ function forcedChoice(
  * Approval is asked for per command. With the gate switched off the tool runs
  * straight away — that's the user's call to make, and it's off by choice.
  */
-function toolContext(req: ChatStreamRequest): ToolContext {
+function toolContext(cfg: ProviderConfig, req: ChatStreamRequest, signal: AbortSignal): ToolContext {
   return {
     searchEngineUrl: req.searchEngineUrl,
+    // Providers with a server-side search do it better than scraping a results
+    // page: no scraping to rate limit, and the model reads the pages it finds.
+    // Gemini refuses grounding alongside function declarations, so with the
+    // browser or terminal switched on it can't ground the main request -- but
+    // a search of its own, with nothing else switched on, still can.
+    delegateSearch:
+      req.webSearch && NATIVE_WEB_SEARCH[cfg.kind]
+        ? (query) => nativeWebSearch(cfg, req.model, query, signal)
+        : undefined,
     approveCommand: (command, cwd) =>
       req.approveCommands
         ? requestApproval({ kind: "command", title: "Run this command?", detail: command, context: cwd })
@@ -177,81 +187,6 @@ async function readNDJSON(
   } finally {
     await reader.cancel().catch(() => {});
   }
-}
-
-/**
- * Requests that back off instead of giving up.
- *
- * A tool-calling turn is not one request, it is one request per iteration, all
- * issued as fast as the tools resolve. Gemini's free tier allows on the order
- * of ten a minute, so a few tool steps exhaust the quota in seconds and every
- * provider here previously turned that into a dead turn: 429 went straight to
- * assertOk and the whole answer was lost, tool results included.
- *
- * Waiting is almost always the right response. The server usually says how
- * long to wait, and when it does not, doubling with jitter avoids a room full
- * of clients retrying in lockstep. Only the statuses that mean "later" are
- * retried -- a 400 or a 401 will say the same thing however long we wait.
- */
-const RETRYABLE = new Set([429, 500, 502, 503, 504]);
-const MAX_ATTEMPTS = 4;
-
-/** Honours Retry-After in both its forms: seconds, or an HTTP date. */
-function retryAfterMs(res: Response): number | null {
-  const raw = res.headers.get("retry-after");
-  if (!raw) return null;
-  const secs = Number(raw);
-  if (Number.isFinite(secs)) return Math.max(0, secs * 1000);
-  const when = Date.parse(raw);
-  return Number.isFinite(when) ? Math.max(0, when - Date.now()) : null;
-}
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) return reject(new Error("Aborted"));
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    function onAbort() {
-      clearTimeout(timer);
-      reject(new Error("Aborted"));
-    }
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-async function fetchWithRetry(
-  url: string,
-  init: RequestInit,
-  onWait?: (ms: number, attempt: number) => void
-): Promise<Response> {
-  // Every caller already puts the turn's abort signal in the init, and the
-  // wait between attempts has to honour it too -- otherwise pressing Stop
-  // leaves a retry sleeping in the background, to wake and fire a request the
-  // person has already cancelled.
-  const signal = (init.signal ?? new AbortController().signal) as AbortSignal;
-  let lastStatus = 0;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const res = await fetch(url, init);
-    if (res.ok || !RETRYABLE.has(res.status)) return res;
-    lastStatus = res.status;
-    if (attempt === MAX_ATTEMPTS) return res;
-
-    // The body holds the provider's explanation; read it so the connection is
-    // freed, and so a final failure can still report what was said.
-    await res.text().catch(() => "");
-
-    // Capped, because a server asking for five minutes is not something to
-    // sit through silently -- better to fail and let the person decide.
-    const told = retryAfterMs(res);
-    const backoff = Math.min(30_000, 1000 * 2 ** (attempt - 1));
-    const jitter = Math.floor(Math.random() * 250);
-    const wait = Math.min(60_000, told ?? backoff + jitter);
-    onWait?.(wait, attempt);
-    await sleep(wait, signal);
-  }
-  throw new Error(`HTTP ${lastStatus}: giving up after ${MAX_ATTEMPTS} attempts`);
 }
 
 async function assertOk(res: Response) {
@@ -439,7 +374,7 @@ async function streamAnthropic(
 
     const results: unknown[] = [];
     for (const tc of toolCalls) {
-      const result = await executeTool(tc.name, parseArgs(tc.argsText), toolContext(req));
+      const result = await executeTool(tc.name, parseArgs(tc.argsText), toolContext(cfg, req, signal));
       handlers.onToolEvent(result.event);
       results.push({ type: "tool_result", tool_use_id: tc.id, content: result.content, is_error: !result.event.ok });
     }
@@ -614,7 +549,7 @@ async function streamOpenAIStyle(
     });
 
     for (const [i, tc] of realCalls.entries()) {
-      const result = await executeTool(tc.name, parseArgs(tc.argsText), toolContext(req));
+      const result = await executeTool(tc.name, parseArgs(tc.argsText), toolContext(cfg, req, signal));
       handlers.onToolEvent(result.event);
       messages.push({
         role: "tool",
@@ -817,7 +752,7 @@ async function streamGoogle(
     const responseParts: unknown[] = [];
     for (const c of calls) {
       if (signal.aborted) return full;
-      const result = await executeTool(c.name, c.args, toolContext(req));
+      const result = await executeTool(c.name, c.args, toolContext(cfg, req, signal));
       handlers.onToolEvent(result.event);
       responseParts.push({ functionResponse: { name: c.name, response: { result: result.content } } });
     }
@@ -935,7 +870,7 @@ async function streamOllama(
 
     for (const tc of toolCalls) {
       const args = typeof tc.args === "string" ? parseArgs(tc.args) : tc.args;
-      const result = await executeTool(tc.name, args, toolContext(req));
+      const result = await executeTool(tc.name, args, toolContext(cfg, req, signal));
       handlers.onToolEvent(result.event);
       // `tool_name` is what lets Ollama's chat template bind this result back
       // to the call the model made. Without it many templates render the
@@ -1014,6 +949,47 @@ export async function generateTitle(
   let out = "";
   await streamChat(cfg, req, { onChunk: (d) => (out += d), onToolEvent: () => {} }, signal);
   return sanitizeTitle(out);
+}
+
+/**
+ * One search, run by the provider itself.
+ *
+ * Nothing but search is switched on here, which is the point: it's what makes
+ * Gemini accept its own `google_search` grounding, and Gemini refuses that in
+ * any request that also carries function declarations. The main turn needs
+ * those declarations the moment the browser, terminal or files are on, so the
+ * search gets a request to itself and comes back as a tool result.
+ */
+export async function nativeWebSearch(
+  cfg: ProviderConfig,
+  model: string,
+  query: string,
+  signal: AbortSignal
+): Promise<string> {
+  const req: ChatStreamRequest = {
+    requestId: "search",
+    providerId: cfg.id,
+    model,
+    system:
+      "You are a search tool. Search the web for the query and report what you found: the key facts, with the source URL for each. No preamble, no offers to help further.",
+    messages: [{ role: "user", content: query }],
+    temperature: 1,
+    maxTokens: 1500,
+    webSearch: true,
+    browserTools: false,
+    maxToolIterations: 0,
+    searchEngineUrl: "",
+    forcedTools: [],
+    terminalTool: false,
+    approveCommands: true,
+    fileTools: false,
+    approveWrites: true,
+    reasoningEffort: "off",
+    reasoningSupported: false
+  };
+  let out = "";
+  await streamChat(cfg, req, { onChunk: (d) => (out += d), onToolEvent: () => {} }, signal);
+  return out.trim();
 }
 
 export async function streamChat(

@@ -12,6 +12,8 @@
  * real browser is still for.
  */
 
+import { fetchWithRetry, HttpError, retryAfterMs } from "./retry.js";
+
 const MAX_BYTES = 3 * 1024 * 1024;
 const TIMEOUT_MS = 20_000;
 
@@ -86,6 +88,16 @@ export function linksOf(html: string, baseUrl: string): { text: string; href: st
   return out;
 }
 
+/** Says what a non-OK status means, so a limit reads as a limit. */
+function describeStatus(host: string, res: Response): string {
+  const wait = retryAfterMs(res);
+  const waited = wait ? `, and asked to wait ${Math.ceil(wait / 1000)}s` : "";
+  if (res.status === 429) return `${host} rate limited this request (429${waited}).`;
+  if (res.status === 403) return `${host} refused this request (403) — it may be blocking automated fetches.`;
+  if (res.status === 404) return `${host} has nothing at that URL (404).`;
+  return `${host} returned ${res.status} ${res.statusText}.`;
+}
+
 export interface FetchedPage {
   url: string;
   title: string;
@@ -110,14 +122,25 @@ export async function fetchPage(rawUrl: string): Promise<FetchedPage> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
-      redirect: "follow",
-      signal: controller.signal,
-      headers: { "user-agent": UA, accept: "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8" }
-    });
+    const res = await fetchWithRetry(
+      url.toString(),
+      {
+        redirect: "follow",
+        signal: controller.signal,
+        headers: { "user-agent": UA, accept: "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8" }
+      },
+      // One quick retry covers a blip. A site asking for a real wait should
+      // reach the model as "rate limited", not as a page that timed out --
+      // and waiting it out here would spend the whole timeout doing it.
+      { attempts: 2, maxWait: 3000 }
+    );
     const type = res.headers.get("content-type") ?? "";
-    if (!res.ok && !type.includes("text/html")) {
-      throw new Error(`${res.status} ${res.statusText}`);
+    // An error page is not content. This used to pass any HTML body through
+    // whatever its status, so a 429 reached the model as a pile of navigation
+    // links: it would report that the search came back empty and try again,
+    // never learning it had been rate limited.
+    if (!res.ok) {
+      throw new HttpError(res.status, res.statusText, describeStatus(url.hostname, res));
     }
     if (!/text\/html|text\/plain|application\/(json|xml|xhtml)/.test(type)) {
       throw new Error(`That URL returned ${type || "a non-text response"}, which there's nothing to read in.`);
@@ -140,4 +163,119 @@ export async function fetchPage(rawUrl: string): Promise<FetchedPage> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Searching
+// ---------------------------------------------------------------------------
+
+/**
+ * Searching needs its own endpoints, separate from the engine the browser
+ * uses.
+ *
+ * The visible browser runs JavaScript, so `duckduckgo.com/?q=` is right for
+ * it. Fetching that same URL as raw HTML returns a shell with two links in it
+ * and no results at all -- which is exactly what searching here used to do.
+ * These are the HTML-only endpoints, which answer a form POST with real
+ * results and no JavaScript.
+ */
+const SEARCH_ENDPOINTS = [
+  { name: "duckduckgo", url: "https://html.duckduckgo.com/html/" },
+  { name: "duckduckgo-lite", url: "https://lite.duckduckgo.com/lite/" }
+];
+
+export interface SearchResult {
+  title: string;
+  url: string;
+}
+
+/**
+ * DuckDuckGo hands back every result as `duckduckgo.com/l/?uddg=<real-url>`.
+ * Unwrapping is not cosmetic: results used to be dropped wholesale by a filter
+ * that excluded the engine's own hostname, which every single one of these
+ * matches, leaving nothing but the region picker to show the model.
+ */
+function unwrapRedirect(href: string, base: string): string | null {
+  try {
+    const u = new URL(href, base);
+    const nested = u.searchParams.get("uddg") ?? u.searchParams.get("u");
+    const target = nested ? new URL(nested, base) : u;
+    return target.protocol === "http:" || target.protocol === "https:" ? target.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Results only, by the class the engine marks them with. Scraping every anchor
+ * instead sweeps up the nav, the region list and the privacy links, which read
+ * to a model as a page that found nothing.
+ */
+const RESULT_LINK = /class=["'][^"']*\b(?:result__a|result-link)\b/i;
+
+export function resultsFrom(html: string, base: string): SearchResult[] {
+  const out: SearchResult[] = [];
+  const seen = new Set<string>();
+  const re = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null && out.length < 25) {
+    if (!RESULT_LINK.test(m[1])) continue;
+    const hrefM = /href=["']([^"']+)["']/i.exec(m[1]);
+    if (!hrefM) continue;
+    const url = unwrapRedirect(decodeEntities(hrefM[1]), base);
+    if (!url || seen.has(url)) continue;
+    const title = decodeEntities(m[2].replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+    if (!title) continue;
+    seen.add(url);
+    out.push({ title, url });
+  }
+  return out;
+}
+
+export interface SearchOutcome {
+  results: SearchResult[];
+  engine: string;
+}
+
+/** Searches the web without the browser panel, trying each endpoint in turn. */
+export async function searchWeb(query: string): Promise<SearchOutcome> {
+  const trouble: string[] = [];
+  for (const endpoint of SEARCH_ENDPOINTS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      const res = await fetchWithRetry(
+        endpoint.url,
+        {
+          method: "POST",
+          redirect: "follow",
+          signal: controller.signal,
+          headers: {
+            "user-agent": UA,
+            "content-type": "application/x-www-form-urlencoded",
+            accept: "text/html,application/xhtml+xml",
+            "accept-language": "en-US,en;q=0.9"
+          },
+          body: new URLSearchParams({ q: query, kl: "us-en" }).toString()
+        },
+        // Rate limited here means move to the next endpoint, not wait.
+        { attempts: 2, maxWait: 2000 }
+      );
+      if (!res.ok) {
+        trouble.push(describeStatus(new URL(endpoint.url).hostname, res));
+        continue;
+      }
+      const results = resultsFrom(await res.text(), res.url || endpoint.url);
+      if (results.length > 0) return { results, engine: endpoint.name };
+      trouble.push(`${endpoint.name} returned a page with no results on it`);
+    } catch (err) {
+      if (controller.signal.aborted) trouble.push(`${endpoint.name} timed out`);
+      else trouble.push(`${endpoint.name}: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  // Saying which engines were tried and what each one did beats "no results",
+  // which a model reads as "the web has nothing" and acts on.
+  throw new Error(`Search failed. ${trouble.join("; ")}`);
 }

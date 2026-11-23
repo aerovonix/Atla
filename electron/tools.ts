@@ -4,7 +4,7 @@ import { applyEdit, currentContent, listDir, numberLines, readFileText, resolveP
 import { diffStat, unifiedDiff } from "../shared/diff.js";
 import { describeError } from "../shared/errors.js";
 import { capture, focusedWindowTitle, listWindows, perform, toScreenCoords } from "./desktop.js";
-import { fetchPage } from "./fetcher.js";
+import { fetchPage, searchWeb } from "./fetcher.js";
 import { decide, describeAction, type DesktopAction, type DesktopPolicy } from "../shared/desktopPolicy.js";
 import type { ToolEvent } from "../shared/types.js";
 
@@ -292,6 +292,12 @@ function argsOf(raw: unknown): string {
 export interface ToolContext {
   searchEngineUrl: string;
   /**
+   * Hands the search to the provider's own server-side search, when it has
+   * one. Absent means there is none, and `quiet_search` fetches a results
+   * page itself.
+   */
+  delegateSearch?: (query: string) => Promise<string>;
+  /**
    * Asks the user whether a command may run. Absent means no approver is
    * wired up, which is treated as a refusal — a missing gate must never read
    * as an open one.
@@ -465,21 +471,26 @@ ${clip(body)}`,
     case "quiet_search": {
       const query = String(args.query ?? "").trim();
       if (!query) throw new Error("Missing 'query'.");
-      const url = ctx.searchEngineUrl.includes("%s")
-        ? ctx.searchEngineUrl.replace("%s", encodeURIComponent(query))
-        : `${ctx.searchEngineUrl}${encodeURIComponent(query)}`;
-      const page = await fetchPage(url);
-      // The links are the useful half of a results page; the prose around
-      // them is mostly the engine's own furniture.
-      const results = page.links
-        .filter((l) => /^https?:/.test(l.href) && !/duckduckgo|google\.|bing\./.test(new URL(l.href).hostname))
-        .slice(0, 25)
-        .map((l) => `- ${l.text} -> ${l.href}`)
-        .join("\n");
+
+      // A provider that searches server-side has already read the pages it
+      // found, so its answer beats a list of links -- and it can't be rate
+      // limited the way scraping a results page can.
+      if (ctx.delegateSearch) {
+        try {
+          const found = (await ctx.delegateSearch(query)).trim();
+          if (found) return { content: `Results for "${query}":\n\n${clip(found)}`, summary: query };
+        } catch {
+          // Fall through and search the hard way. A provider that refused the
+          // search is not a reason to tell the user the web is empty.
+        }
+      }
+
+      const { results, engine } = await searchWeb(query);
       return {
-        content: `Results for "${query}":\n\n${results || clip(page.text)}`,
-        summary: query,
-        url: page.url
+        content: `Results for "${query}" (via ${engine}):\n\n${results
+          .map((r) => `- ${r.title} -> ${r.url}`)
+          .join("\n")}`,
+        summary: query
       };
     }
     case "read_file": {

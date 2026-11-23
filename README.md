@@ -46,8 +46,9 @@ This exists because a model with no clock answers from its training data and is 
 
 All four are **on by default**. That makes them *available* — the model decides per message whether reaching for one is worth it, rather than searching every time. Toggle them per chat in the composer's **+** menu, or globally in Settings → Model.
 
-- **Claude, Gemini, OpenRouter** use their provider's own server-side search.
+- **Claude, Gemini, OpenRouter** use their provider's own server-side search. When other tools are switched on and the provider can't ground the main request (see the Gemini note under **Built-in browser**), the search gets a request of its own and comes back as a tool result — so it stays the provider's search either way. It is billed as a request against that provider, like any other.
 - **Everything else — including local Ollama models — searches through Atla's built-in browser**, so web search works even fully offline-hosted, as long as the machine has network.
+- `quiet_search` reads results without the browser panel, and uses DuckDuckGo's HTML-only endpoints rather than the engine configured in Settings. That setting points the *browser* at a search page, which is a different job: those pages render their results with JavaScript, so fetching one as raw HTML returns a shell with no results in it.
 
 ### Forcing a tool with @
 
@@ -242,7 +243,7 @@ Light mode uses a deeper `#c2410c` for accent *text* since the raw brand orange 
 - No auto-update wiring for the packaged app.
 - The message queue lives in memory only — quitting mid-queue loses anything still waiting.
 - The terminal has no TTY, so interactive programs (REPLs, `top`, prompts for input) won't work.
-- Gemini can't combine its native search grounding with function calling in one request; Atla picks one per message (see **Built-in browser**).
+- Gemini can't combine its native search grounding with function calling in one request; Atla picks one per message (see **Built-in browser**). A `quiet_search` while other tools are on is run as a grounded request of its own instead, which costs one extra provider request per search.
 - File reads are capped at 512KB and skip anything that looks binary. `edit_file` needs an exact, unique match.
 - Approvals are per-run and per-kind; "Allow for this session" is never persisted, so a restart puts the gate back.
 
