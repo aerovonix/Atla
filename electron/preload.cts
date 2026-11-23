@@ -2,11 +2,14 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   AdblockStats,
   ApprovalRequest,
+  AppSettings,
+  PaneMessage,
   AppState,
   ChatStreamEvent,
   ChatStreamRequest,
   FetchModelsResponse,
   GenerateTitleResponse,
+  LocalModelResult,
   PersistedData,
   ProviderConfig,
   TerminalEvent
@@ -36,6 +39,21 @@ const api = {
       return () => ipcRenderer.removeListener("chat:event", listener);
     }
   },
+  /**
+   * Local model residency. Load can take minutes on a large model, so the
+   * renderer holds the promise and shows progress rather than blocking.
+   */
+  models: {
+    list: (cfg: ProviderConfig): Promise<LocalModelResult> => ipcRenderer.invoke("models:list", cfg),
+    capabilities: (cfg: ProviderConfig, model: string): Promise<string[] | null> =>
+      ipcRenderer.invoke("models:capabilities", cfg, model),
+    load: (cfg: ProviderConfig, model: string, keepAliveMinutes: number): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke("models:load", cfg, model, keepAliveMinutes),
+    unload: (cfg: ProviderConfig, model: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke("models:unload", cfg, model),
+    cancelLoad: (providerId: string, model: string): Promise<boolean> =>
+      ipcRenderer.invoke("models:cancel-load", providerId, model)
+  },
   provider: {
     fetchModels: (cfg: ProviderConfig): Promise<FetchModelsResponse> => ipcRenderer.invoke("provider:fetch-models", cfg),
     generateTitle: (args: { providerId: string; model: string; transcript: string }): Promise<GenerateTitleResponse> =>
@@ -43,6 +61,8 @@ const api = {
   },
   browser: {
     partition: (): Promise<string> => ipcRenderer.invoke("browser:partition"),
+    allowScripts: (host: string): Promise<boolean> => ipcRenderer.invoke("browser:allow-scripts", host),
+    scriptsBlocked: (host: string): Promise<number> => ipcRenderer.invoke("browser:scripts-blocked", host),
     stats: (): Promise<AdblockStats> => ipcRenderer.invoke("browser:stats"),
     /**
      * The main process drives the <webview> through here: it sends a command,
@@ -80,11 +100,60 @@ const api = {
     },
     reply: (id: string, payload: unknown) => ipcRenderer.send(`dash:reply:${id}`, payload)
   },
+  pty: {
+    create: (opts: { cwd?: string; cols?: number; rows?: number }): Promise<string | null> =>
+      ipcRenderer.invoke("pty:create", opts),
+    write: (id: string, data: string): Promise<boolean> => ipcRenderer.invoke("pty:write", id, data),
+    resize: (id: string, cols: number, rows: number): Promise<boolean> =>
+      ipcRenderer.invoke("pty:resize", id, cols, rows),
+    kill: (id: string): Promise<boolean> => ipcRenderer.invoke("pty:kill", id),
+    list: (): Promise<{ id: string; title: string; cwd: string; exited: boolean }[]> =>
+      ipcRenderer.invoke("pty:list"),
+    scrollback: (id: string): Promise<string> => ipcRenderer.invoke("pty:scrollback", id),
+    unavailable: (): Promise<string | null> => ipcRenderer.invoke("pty:unavailable"),
+    onData: (cb: (e: { id: string; data: string }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, p: { id: string; data: string }) => cb(p);
+      ipcRenderer.on("pty:data", listener);
+      return () => ipcRenderer.removeListener("pty:data", listener);
+    },
+    onExit: (cb: (e: { id: string; code: number }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, p: { id: string; code: number }) => cb(p);
+      ipcRenderer.on("pty:exit", listener);
+      return () => ipcRenderer.removeListener("pty:exit", listener);
+    }
+  },
+  windows: {
+    popOut: (pane: string): Promise<boolean> => ipcRenderer.invoke("windows:pop-out", pane),
+    dock: (pane: string): Promise<boolean> => ipcRenderer.invoke("windows:dock", pane),
+    popped: (): Promise<string[]> => ipcRenderer.invoke("windows:popped"),
+    toMain: (message: unknown): Promise<boolean> => ipcRenderer.invoke("windows:to-main", message),
+    onMessage: (cb: (m: PaneMessage) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, m: PaneMessage) => cb(m);
+      ipcRenderer.on("windows:message", listener);
+      return () => ipcRenderer.removeListener("windows:message", listener);
+    },
+    onPopped: (cb: (panes: string[]) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, panes: string[]) => cb(panes);
+      ipcRenderer.on("windows:popped", listener);
+      return () => ipcRenderer.removeListener("windows:popped", listener);
+    }
+  },
+  settings: {
+    get: (): Promise<AppSettings | null> => ipcRenderer.invoke("settings:get"),
+    patch: (patch: Partial<AppSettings>): Promise<AppSettings | null> =>
+      ipcRenderer.invoke("settings:patch", patch),
+    onChanged: (cb: (s: AppSettings) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, s: AppSettings) => cb(s);
+      ipcRenderer.on("settings:changed", listener);
+      return () => ipcRenderer.removeListener("settings:changed", listener);
+    }
+  },
   update: {
     state: (): Promise<UpdateState> => ipcRenderer.invoke("update:state"),
     check: (): Promise<UpdateState> => ipcRenderer.invoke("update:check"),
     install: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("update:install"),
     setEnabled: (on: boolean): Promise<UpdateState> => ipcRenderer.invoke("update:set-enabled", on),
+    setChannel: (channel: string): Promise<UpdateState> => ipcRenderer.invoke("update:set-channel", channel),
     onState: (cb: (s: UpdateState) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, s: UpdateState) => cb(s);
       ipcRenderer.on("update:state", listener);

@@ -146,6 +146,13 @@ export const GlobeIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+/** Speed tiers: a bolt, filled in progressively by the caller's colour. */
+export const BoltIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z" />
+  </svg>
+);
+
 export const ShieldIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
     <path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" />
@@ -277,5 +284,14 @@ export const DesktopIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
     <rect x="2" y="3" width="20" height="14" rx="2" />
     <path d="M8 21h8M12 17v4" />
+  </svg>
+);
+
+/** Reasoning effort. A lit bulb: the idea, not the organ. */
+export const LightbulbIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M9 18h6" />
+    <path d="M10 21h4" />
+    <path d="M12 3a6 6 0 0 0-3.6 10.8c.5.4.8.9.9 1.5l.1.7h5.2l.1-.7c.1-.6.4-1.1.9-1.5A6 6 0 0 0 12 3z" />
   </svg>
 );

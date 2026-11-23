@@ -1,7 +1,7 @@
 {
   "name": "atla",
   "productName": "Atla",
-  "version": "0.6.1",
+  "version": "0.7.0-alpha.9",
   "description": "Bring-your-own-model AI chat with a built-in browser, terminal, and file access",
   "author": {
     "name": "Aerovonix",
@@ -24,11 +24,21 @@
     "package:mac": "npm run build && electron-builder --mac",
     "package:linux": "npm run build && electron-builder --linux",
     "release": "npm run build && electron-builder --publish always",
-    "release:mac": "npm run build && electron-builder --mac --publish always"
+    "release:mac": "npm run build && electron-builder --mac --publish always",
+    "version:alpha": "npm version prerelease --preid=alpha -m \"Cut %s\"",
+    "version:beta": "npm version prerelease --preid=beta -m \"Cut %s\"",
+    "version:rc": "npm version prerelease --preid=rc -m \"Cut %s\"",
+    "version:patch": "npm version patch -m \"Release %s\"",
+    "version:minor": "npm version minor -m \"Release %s\"",
+    "version:next-minor": "npm version preminor --preid=alpha -m \"Start %s\"",
+    "version:next-patch": "npm version prepatch --preid=alpha -m \"Start %s\""
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
     "electron-updater": "^6.8.9",
     "nanoid": "^5.0.7",
+    "node-pty": "^1.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.1",
@@ -42,8 +52,8 @@
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.20",
     "concurrently": "^9.0.1",
-    "electron": "^32.0.1",
-    "electron-builder": "^25.0.5",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.15.3",
     "postcss": "^8.4.45",
     "tailwindcss": "^3.4.10",
     "typescript": "^5.5.4",
@@ -90,13 +100,16 @@
       "category": "Development",
       "synopsis": "Bring-your-own-model AI chat with a browser, terminal, and file access",
       "desktop": {
-        "StartupWMClass": "Atla"
+        "entry": {
+          "StartupWMClass": "Atla"
+        }
       }
     },
     "nsis": {
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
-      "installerHeaderIcon": "build/icon.ico"
+      "installerHeaderIcon": "build/icon.ico",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "dmg": {
       "artifactName": "${productName}-${version}-${arch}.dmg"
@@ -116,6 +129,10 @@
         "owner": "aerovonix",
         "repo": "Atla"
       }
+    ],
+    "npmRebuild": false,
+    "asarUnpack": [
+      "**/node_modules/node-pty/**"
     ]
   },
   "license": "CC-BY-NC-SA-4.0",

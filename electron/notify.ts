@@ -10,11 +10,39 @@ import { clampText, stripMarkdown } from "../shared/plaintext.js";
  * get someone to switch notifications off entirely.
  */
 
-let targetWindow: BrowserWindow | null = null;
+/**
+ * Resolved on demand rather than stored.
+ *
+ * The window does not exist yet when this is wired up, and it is set back to
+ * null when it closes — so a reference captured at startup is null forever and
+ * a reference captured later goes stale. Either way the focus check below
+ * silently degrades into "always notify", which is the failure this had:
+ * every finished reply raised a toast, including ones the user was watching
+ * arrive.
+ */
+let getWindow: () => BrowserWindow | null = () => null;
 let icon: Electron.NativeImage | null = null;
 
-export function initNotify(win: BrowserWindow) {
-  targetWindow = win;
+/** The window notifications check focus against, or null if there isn't one. */
+export function notifyTarget(): BrowserWindow | null {
+  const win = getWindow();
+  return win && !win.isDestroyed() ? win : null;
+}
+
+/**
+ * Whether a finished reply should raise a toast.
+ *
+ * Split out because the interesting case is the one that is easy to get wrong
+ * by accident: `focused` unknown. A missing window must mean "notify" only
+ * when there is genuinely no window — not when we merely failed to find one.
+ */
+export function shouldNotify(opts: { supported: boolean; focused: boolean }): boolean {
+  if (!opts.supported) return false;
+  return !opts.focused;
+}
+
+export function initNotify(resolve: () => BrowserWindow | null) {
+  getWindow = resolve;
 
   // Windows reads the toast's app name and icon from the AppUserModelID, and
   // Electron's default is "<something>.electron.app" — which is what shows up
@@ -35,11 +63,11 @@ export function initNotify(win: BrowserWindow) {
 
 export function registerNotifyIpc() {
   ipcMain.handle("notify:send", (_e, args: { title: string; body: string }) => {
-    if (!Notification.isSupported()) return { ok: false as const, reason: "unsupported" };
     // Focus is checked here rather than in the renderer because the renderer
     // can't tell a focused window from a visible one behind another app.
-    if (targetWindow && !targetWindow.isDestroyed() && targetWindow.isFocused()) {
-      return { ok: false as const, reason: "focused" };
+    const win = notifyTarget();
+    if (!shouldNotify({ supported: Notification.isSupported(), focused: Boolean(win?.isFocused()) })) {
+      return { ok: false as const, reason: Notification.isSupported() ? "focused" : "unsupported" };
     }
 
     // The OS won't render markdown, so asterisks and backticks arrive as
@@ -55,9 +83,10 @@ export function registerNotifyIpc() {
     });
     // Clicking it should take you to the thing it's telling you about.
     n.on("click", () => {
-      if (targetWindow && !targetWindow.isDestroyed()) {
-        if (targetWindow.isMinimized()) targetWindow.restore();
-        targetWindow.focus();
+      const target = notifyTarget();
+      if (target) {
+        if (target.isMinimized()) target.restore();
+        target.focus();
       }
     });
     n.show();

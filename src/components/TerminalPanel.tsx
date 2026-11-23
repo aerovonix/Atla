@@ -1,4 +1,9 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { PopOutButton } from "./PopOutButton";
+import { PtyTerminal } from "./PtyTerminal";
+import { TerminalTabs, useTerminalView } from "./TerminalTabs";
+import { usePtyStore } from "../state/ptyStore";
+import { isPoppedWindow } from "../paneContext";
 import { useTerminalStore } from "../state/terminalStore";
 import { CloseIcon, StopIcon, TrashIcon } from "./icons";
 
@@ -13,6 +18,14 @@ function shortCwd(cwd: string): string {
 
 export function TerminalPanel() {
   const { open, setOpen, cwd, running, blocks, history, setCwd, pushHistory, clear, apply } = useTerminalStore();
+  const { tabs, unavailable, ready, hydrate } = usePtyStore();
+  const view = useTerminalView().current;
+
+  // Sessions are started once the pane is first opened, not at app start: a
+  // shell nobody has asked for is a process nobody asked for.
+  useEffect(() => {
+    if (open && !ready) void hydrate();
+  }, [open, ready, hydrate]);
   const [input, setInput] = useState("");
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -85,12 +98,19 @@ export function TerminalPanel() {
   };
 
   return (
-    <div className="h-[280px] shrink-0 flex flex-col border-t border-border bg-bg">
+    <div
+      className={`flex flex-col border-t border-border bg-bg ${
+        // Popped, the window is the terminal; docked, it is a strip under the chat.
+        isPoppedWindow() ? "flex-1 w-full min-h-0" : "h-[280px] shrink-0"
+      }`}
+    >
       <div className="h-9 shrink-0 flex items-center gap-2 px-3 border-b border-borderLight">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-secondary">Terminal</span>
-        <span className="font-mono text-[11px] text-secondary truncate" title={cwd}>
-          {shortCwd(cwd)}
-        </span>
+        <TerminalTabs />
+        {view === "agent" && (
+          <span className="font-mono text-[11px] text-secondary truncate" title={cwd}>
+            {shortCwd(cwd)}
+          </span>
+        )}
         <div className="flex-1" />
         {running && (
           <button
@@ -108,6 +128,7 @@ export function TerminalPanel() {
         >
           <TrashIcon width={13} height={13} />
         </button>
+        <PopOutButton pane="terminal" />
         <button
           onClick={() => setOpen(false)}
           className="w-7 h-7 rounded-md flex items-center justify-center text-secondary hover:bg-hover transition-colors"
@@ -117,7 +138,29 @@ export function TerminalPanel() {
         </button>
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-2 font-mono text-[12px] leading-5">
+      {unavailable && view !== "agent" && (
+        <div className="px-3 py-2 text-[12px] text-secondary">
+          No shell available — {unavailable}
+        </div>
+      )}
+
+      {/*
+        Sessions are kept mounted and merely hidden. Unmounting would discard
+        the xterm instance and its rendered scrollback on every tab switch,
+        and the shell would keep running with nothing showing its output.
+      */}
+      {!unavailable &&
+        tabs.map((t) => (
+          <div key={t.id} className="flex-1 min-h-0 px-2 py-1" style={{ display: view === t.id ? "block" : "none" }}>
+            <PtyTerminal sessionId={t.id} visible={view === t.id} />
+          </div>
+        ))}
+
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto px-3 py-2 font-mono text-[12px] leading-5"
+        style={{ display: view === "agent" ? "block" : "none" }}
+      >
         {blocks.length === 0 && (
           <div className="text-secondary">
             Runs one command at a time and keeps the working directory between them. Interactive programs won't work

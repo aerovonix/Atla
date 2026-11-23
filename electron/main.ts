@@ -7,8 +7,12 @@ import { loadAll, saveState, saveProviders, saveStartupFlags, migrateFromNova } 
 import { streamChat, generateTitle } from "./providers.js";
 import { fetchModels } from "./modelList.js";
 import { adblocker } from "./adblock.js";
+import { initSettings, registerSettingsIpc, withOwnedSettings } from "./sharedSettings.js";
+import { closeAllPopouts, registerWindowIpc } from "./windows.js";
+import { registerPtyIpc, killAll as killAllPtys } from "./pty.js";
 import { initBrowserBridge } from "./browserBridge.js";
 import { initTerminal, registerTerminalIpc } from "./terminal.js";
+import { listModels, loadModel, modelCapabilities, supportsModelManagement, unloadModel } from "./localModels.js";
 import { registerFileIpc } from "./files.js";
 import { reviewAndRevise } from "./critic.js";
 import { describeError } from "../shared/errors.js";
@@ -17,7 +21,13 @@ import { initWebDash, registerWebDashIpc } from "./webdash.js";
 import { initNotify, registerNotifyIpc } from "./notify.js";
 import { initUpdater, registerUpdaterIpc } from "./updater.js";
 import { initApprovals, registerApprovalIpc, clearApprovals } from "./approvals.js";
-import type { AppState, ChatStreamRequest, FetchModelsResponse, ProviderConfig } from "../shared/types.js";
+import type {
+  AppState,
+  ChatStreamRequest,
+  FetchModelsResponse,
+  LocalModelResult,
+  ProviderConfig
+} from "../shared/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = process.env.NOVA_DEV === "1" || process.env.ATLA_DEV === "1";
@@ -85,6 +95,10 @@ async function createWindow() {
     }
   });
 
+  // The main window is the app. A popped pane outliving it would leave Atla
+  // running with no way back to a conversation.
+  mainWindow.on("close", () => closeAllPopouts());
+
   mainWindow.webContents.on("preload-error", (_event, preloadPath, error) => {
     console.error(`[preload] failed to load ${preloadPath}:`, error);
   });
@@ -120,21 +134,24 @@ app.whenReady().then(async () => {
   const all = await loadAll();
   providersCache = all.providers;
 
-  adblocker.setEnabled(all.state.settings.adblockEnabled);
-  adblocker.setCustomRules(all.state.settings.customBlocklist);
+  // Takes ownership of settings and applies every side effect they imply,
+  // so the adblocker and updater are configured before any window exists.
+  initSettings(all.state.settings);
+  registerSettingsIpc();
+  registerWindowIpc(isDev, () => mainWindow);
+  registerPtyIpc();
   adblocker.attach(BROWSER_PARTITION);
 
   ipcMain.handle("store:load", async () => loadAll());
 
   ipcMain.handle("store:save-state", async (_e, state: AppState) => {
-    adblocker.setEnabled(state.settings.blockTrackers ?? state.settings.adblockEnabled);
-    adblocker.setStripParams(state.settings.stripTrackingParams !== false);
-    adblocker.setLeanWhenHidden(state.settings.leanWhenHidden !== false);
-    adblocker.setCustomRules(state.settings.customBlocklist);
-    await saveState(state);
+    // A renderer's settings mirror can be a beat behind; the owned copy wins
+    // so a stale window cannot persist its staleness over the real thing.
+    const owned = withOwnedSettings(state);
+    await saveState(owned);
     // Written alongside, so the next launch can read the GPU decision without
     // touching the (large) state file.
-    await saveStartupFlags(state.settings);
+    await saveStartupFlags(owned.settings);
   });
 
   ipcMain.handle("store:save-providers", async (_e, providers: ProviderConfig[]) => {
@@ -149,6 +166,85 @@ app.whenReady().then(async () => {
     } catch (err) {
       return { ok: false, error: describeError(err) };
     }
+  });
+
+  /**
+   * Local model residency.
+   *
+   * Loads are tracked so they can be cancelled: a large model can sit for
+   * minutes, and without a handle on the request the only way out of a
+   * mistaken click is to wait it out. Aborting won't stop Ollama loading the
+   * weights, but it does give the UI its button back, which is the part the
+   * person is actually stuck behind.
+   */
+  const modelLoads = new Map<string, AbortController>();
+  const loadKey = (providerId: string, model: string) => `${providerId} :: ${model}`;
+
+  ipcMain.handle("models:list", async (_e, cfg: ProviderConfig): Promise<LocalModelResult> => {
+    if (!supportsModelManagement(cfg)) return { ok: true, models: [] };
+    try {
+      return { ok: true, models: await listModels(cfg) };
+    } catch (err) {
+      return { ok: false, error: describeError(err) };
+    }
+  });
+
+  ipcMain.handle(
+    "models:capabilities",
+    async (_e, cfg: ProviderConfig, model: string): Promise<string[] | null> => {
+      if (!supportsModelManagement(cfg)) return null;
+      try {
+        return await modelCapabilities(cfg, model);
+      } catch {
+        // An unreachable server or an older one both mean "no answer", and the
+        // caller already falls back to guessing from the name.
+        return null;
+      }
+    }
+  );
+
+  ipcMain.handle(
+    "models:load",
+    async (
+      _e,
+      cfg: ProviderConfig,
+      model: string,
+      keepAliveMinutes: number
+    ): Promise<{ ok: boolean; error?: string }> => {
+      const key = loadKey(cfg.id, model);
+      modelLoads.get(key)?.abort();
+      const controller = new AbortController();
+      modelLoads.set(key, controller);
+      try {
+        await loadModel(cfg, model, keepAliveMinutes, controller.signal);
+        return { ok: true };
+      } catch (err) {
+        if (controller.signal.aborted) return { ok: false, error: "Cancelled." };
+        return { ok: false, error: describeError(err) };
+      } finally {
+        if (modelLoads.get(key) === controller) modelLoads.delete(key);
+      }
+    }
+  );
+
+  ipcMain.handle(
+    "models:unload",
+    async (_e, cfg: ProviderConfig, model: string): Promise<{ ok: boolean; error?: string }> => {
+      // A load still in flight has to go first, or it finishes after the
+      // unload and puts the model straight back.
+      modelLoads.get(loadKey(cfg.id, model))?.abort();
+      try {
+        await unloadModel(cfg, model);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: describeError(err) };
+      }
+    }
+  );
+
+  ipcMain.handle("models:cancel-load", (_e, providerId: string, model: string) => {
+    modelLoads.get(loadKey(providerId, model))?.abort();
+    return true;
   });
 
   ipcMain.handle(
@@ -177,12 +273,12 @@ app.whenReady().then(async () => {
   registerUpdaterIpc();
   registerWebDashIpc();
   registerNotifyIpc();
-  initWebDash(mainWindow!);
-  initNotify(mainWindow!);
+  initWebDash(() => mainWindow);
+  initNotify(() => mainWindow);
   // Starts enabled; the renderer syncs the user's real setting once the store
   // is hydrated. Main doesn't read settings itself, and a first check is
   // eight seconds out, so there's time for that to land first.
-  initUpdater(mainWindow!, true);
+  initUpdater(() => mainWindow, true);
   registerApprovalIpc();
 
   ipcMain.handle("browser:stats", () => adblocker.stats);
@@ -190,6 +286,15 @@ app.whenReady().then(async () => {
   // images, fonts and video are never fetched.
   ipcMain.on("browser:visible", (_e, visible: boolean) => adblocker.setPanelVisible(Boolean(visible)));
   ipcMain.handle("browser:partition", () => BROWSER_PARTITION);
+  // Rescues a page that lightning rendered blank. Scoped to one host and to
+  // this run only -- see AdBlocker.allowScripts.
+  ipcMain.handle("browser:scripts-blocked", (_e, host: string) =>
+    adblocker.scriptsBlockedFor(String(host ?? ""))
+  );
+  ipcMain.handle("browser:allow-scripts", (_e, host: string) => {
+    adblocker.allowScripts(String(host ?? ""));
+    return true;
+  });
 
   ipcMain.on("chat:start", async (event, req: ChatStreamRequest) => {
     const sender = event.sender;
@@ -213,6 +318,7 @@ app.whenReady().then(async () => {
         req,
         {
           onChunk: (delta) => send({ type: "chunk", requestId: req.requestId, delta }),
+          onReasoning: (delta) => send({ type: "reasoning", requestId: req.requestId, delta }),
           onToolEvent: (evt) => send({ type: "tool", requestId: req.requestId, event: evt })
         },
         controller.signal
@@ -288,3 +394,8 @@ app.whenReady().then(async () => {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
+
+// Shells are children of this process, not of any window. Without this they
+// survive the app on POSIX and linger as orphans -- the same class of bug the
+// terminal's process-group kill exists to prevent.
+app.on("will-quit", () => killAllPtys());

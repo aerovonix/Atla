@@ -2,10 +2,40 @@
 
 Known work, roughly in the order it's worth doing. Items marked **unverified** are written and building but have never actually been run — they're not known-broken, they're unknown.
 
-## Before the next release
+## Sandbox exit criteria
 
-- [ ] **Cut v0.6.0 with `npm run release`, not `gh release create`.** The updater reads a `latest.yml` next to the installer; `gh` uploads only the `.exe`. Until one release exists with that file, auto-update finds nothing and silently reports "up to date". This first one becomes the baseline — anyone on v0.5.2 updates by hand once.
-- [ ] Build and attach the macOS DMG to the same release (`npm run release:mac` on the Mac).
+We stay on `testing` until the program is verified, not until it looks fine.
+Grouped by what is actually known, because "unverified" covers three very
+different situations and only one of them is fixable by using the app more.
+
+**Run and working (Windows):** chat and every provider, build, install over a
+previous version, launch, browser rendering. The suite is 450+ checks under a
+real Electron binary.
+
+**Re-verification owed after Electron 44.** These worked on Electron 32 and
+have not been re-exercised since the jump. Each fails quietly rather than
+loudly, which is what makes them worth deliberate checking:
+
+- [ ] Tracker blocking — `webRequest`. Fails as "pages load fine and nothing
+      is blocked"; the Blocked counter going quiet is the tell
+- [ ] Browser panel `<webview>` — tabs, back/forward, lean/full on panel
+      open and close. The most deprecated thing we depend on
+- [ ] Notifications — toast identity binds early on Windows, so a version
+      change is exactly when "atla.electron.app" would return
+- [ ] Terminal process kill — orphaned shell after a cancel
+- [ ] `desktopCapturer` screenshots
+
+**Never run on any platform.** No amount of daily use reaches these; they
+need deliberate exercise, and two need hardware we are not on:
+
+- [ ] Desktop actuation — clicks and typing. 30+ policy checks, zero
+      actuations ever fired. Belongs in a VM (see below)
+- [ ] Linux — never built or run
+- [ ] macOS — see below
+
+**Not verifiable by testing at all.** These are decisions, not bugs:
+code signing needs money; the web dash being plaintext HTTP needs a design
+change. Both are listed further down and neither blocks the sandbox.
 
 ## macOS — unverified paths
 
@@ -39,10 +69,78 @@ Everything here is written and runs on Windows, but has never executed on macOS.
 - [ ] Startup check that names any missing macOS permission in one place, rather than each surfacing as a different confusing error later.
 - [ ] No syntax highlighting in code blocks.
 - [ ] No token or cost counters — relevant now that the review pass can double the calls per message.
-- [ ] Adblock list is a compact built-in set (~150 patterns), not full EasyList.
+- [ ] Adblock list is a curated built-in set (218 domains plus 24 path
+      patterns), not full EasyList. Held to the rule that nothing in it may
+      break a page, which a generated list cannot promise.
 - [ ] The message queue lives in memory; quitting mid-queue loses anything waiting.
 
 ## Deliberately not doing
 
 - **CC BY-NC-SA for code.** Creative Commons recommends against it for software — no patent grant, and "NonCommercial" is ambiguous in practice. PolyForm Noncommercial is the code-native equivalent if that ambiguity ever becomes a real problem rather than a theoretical one.
 - **A native automation module** for desktop control. Per-platform rebuilds pinned to each Electron version aren't worth it; the platform's own scripting works.
+
+## Electron 45 + certificate trust
+
+Bumped 44.1.1 → 45.4.1 to pick up a newer Chromium root store, prompted by
+the November 2026 eMudhra/emSign key compromise. Soaked on Windows before
+0.7.0 went out: the installed build ran, search and the certificate handling
+both checked by hand, and `node-pty` spawns under the new ABI (the likeliest
+breakage, since 45 crosses an ABI boundary).
+
+What the bump does **not** fix, and the reason it can't: every outbound
+request in the app goes through Node's `fetch` — `providers.ts`,
+`fetcher.ts`, `modelList.ts`, `localModels.ts` — so it is verified against
+the CA list compiled into Electron, never the Windows certificate store.
+Windows received the eMudhra distrust through its automatic trust-update
+endpoint on 16 November and Atla cannot see it. Worse, that distrust is a
+date rule — reject certificates logged after the cutoff, keep the older ones
+— and Node's root store is a flat list of PEMs with nowhere to put a rule.
+Chromium can express it; Node cannot. So bumping Electron refreshes the
+snapshot without making the Node path capable of enforcing this class of
+distrust at all.
+
+Nothing in the app weakens TLS on purpose: no `rejectUnauthorized`, no
+`NODE_TLS_REJECT_UNAUTHORIZED`, no bundled CA file, no custom verify
+procedure. The gap is entirely about which store is consulted.
+
+- [ ] Move outbound requests to Electron's `net.fetch`, which verifies through
+      Chromium and honours the OS distrust list. Needs a proxy bypass for a
+      LAN Ollama (`http://192.168.40.2:11434` here) — `net.fetch` applies
+      Chromium's proxy resolution, which Node's `fetch` does not. This is the
+      part the Electron bump does **not** buy; the bump only refreshes the
+      snapshot.
+- [x] Soak the 45 bump — `node-pty` spawns, terminal works.
+
+## Electron 44 (on `testing`, needs soak)
+
+Upgraded from Electron 32.3.3 to 44.1.1 — Chromium 128 to 152, about two
+years of V8 and Blink work. The whole point is browser performance:
+Speedometer 3.1 in the browser viewport measured **10.6** against Chrome's
+15.5 and Brave's 15.2, and that gap is the engine's age, not our blocking.
+Neither hardware acceleration nor the code cache were at fault; both were
+checked and were already correct.
+
+Typecheck, both test suites and the build pass with no source changes, and
+the suites run under the real Electron binary.
+
+**Measured on 0.7.0-alpha.0:** Speedometer 3.1 went from **10.6 to 16.4** —
+ahead of Chrome's 15.5 and Brave's 15.2 on the same machine. Worth keeping
+the comparison honest, though: Atla's viewport runs no extensions, no
+profile sync and no browser chrome, so some of the lead over Chrome is a
+clean room rather than a faster engine. The 55% gain over our own previous
+build is the part that is unambiguously ours.
+
+- [x] Re-run Speedometer 3.1 and record the new number — 16.4
+- [x] `npm audit` triaged: both findings (esbuild moderate, vite high) are
+      dev-only. Neither is a production dependency and `app.asar` contains
+      zero entries for either, so they affect `npm run dev` and nothing that
+      ships. Still worth a vite 5 → 7 bump eventually, but not a blocker.
+- [x] electron-builder 26 produces a working installer; installed over 0.6.1
+      in place, user data preserved, app launches
+Re-verification of the panel and of desktop capture is tracked once, under
+Sandbox exit criteria above, rather than again here.
+
+- [ ] Confirm the update feed and asset names still agree once a prerelease
+      is actually published to GitHub
+- [ ] Re-check that `latest.yml` is what a published prerelease serves, now
+      that the naming is understood rather than assumed

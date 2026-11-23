@@ -2,7 +2,9 @@ import { session, type Session } from "electron";
 import {
   buildIndex,
   decideRequest,
-  modeFor,
+  tierFor,
+  hostSuffixes,
+  type SpeedTier,
   stripTracking,
   type ResourceKind
 } from "../shared/blocking.js";
@@ -293,6 +295,33 @@ export class Adblocker {
 
   private stripParams = true;
   private leanWhenHidden = true;
+  /** The tier the person picked. Overridden only while the panel is hidden. */
+  private speed: SpeedTier = "normal";
+
+  setSpeed(tier: SpeedTier) {
+    this.speed = tier;
+  }
+
+  /**
+   * Hosts someone has asked to run scripts on, despite lightning.
+   *
+   * Session-scoped rather than saved: the grant exists to rescue a page that
+   * came up blank, and quietly carrying it across restarts would slowly turn
+   * lightning back into fast without anyone deciding to.
+   */
+  private scriptHosts = new Set<string>();
+
+  allowScripts(host: string) {
+    // The count exists to justify offering the prompt; once the offer is
+    // taken it has done its job and would otherwise keep the prompt armed.
+    this.scriptBlocks.delete(host.toLowerCase());
+    const clean = host.toLowerCase().replace(/^\.+|\.+$/g, "");
+    if (clean) this.scriptHosts.add(clean);
+  }
+
+  scriptsAllowedFor(host: string): boolean {
+    return hostSuffixes(host).some((h) => this.scriptHosts.has(h));
+  }
 
   setStripParams(on: boolean) {
     this.stripParams = on;
@@ -300,6 +329,19 @@ export class Adblocker {
 
   setLeanWhenHidden(on: boolean) {
     this.leanWhenHidden = on;
+  }
+
+  /**
+   * Scripts refused per host, so the panel can tell "this page is empty
+   * because we emptied it" from "this page is just short". Without it the
+   * blank-page prompt is guesswork against a text length.
+   */
+  private scriptBlocks = new Map<string, number>();
+
+  scriptsBlockedFor(host: string): number {
+    let total = 0;
+    for (const h of hostSuffixes(host)) total += this.scriptBlocks.get(h) ?? 0;
+    return total;
   }
 
   /** Bytes never fetched because the panel was hidden. */
@@ -317,15 +359,37 @@ export class Adblocker {
 
     sess.webRequest.onBeforeRequest({ urls: ["http://*/*", "https://*/*"] }, (details, callback) => {
       const kind = details.resourceType as ResourceKind;
-      const mode = modeFor({ panelVisible: this.panelVisible || !this.leanWhenHidden });
+      const tier = tierFor({
+        panelVisible: this.panelVisible,
+        chosen: this.speed,
+        leanWhenHidden: this.leanWhenHidden
+      });
+
+      let scriptsAllowed = false;
+      if (kind === "script" && this.scriptHosts.size) {
+        try {
+          scriptsAllowed = this.scriptsAllowedFor(new URL(details.url).hostname);
+        } catch {
+          scriptsAllowed = false;
+        }
+      }
 
       const verdict = decideRequest(TRACKER_INDEX, details.url, kind, {
         blockTrackers: this.enabled,
-        mode
+        tier,
+        scriptsAllowed
       });
 
       if (verdict.block) {
         if (verdict.reason === "weight") this.weightSaved++;
+        if (kind === "script" && verdict.reason === "weight") {
+          try {
+            const h = new URL(details.url).hostname.toLowerCase();
+            this.scriptBlocks.set(h, (this.scriptBlocks.get(h) ?? 0) + 1);
+          } catch {
+            /* unparseable url, nothing to attribute it to */
+          }
+        }
         else this.blockedCount++;
         callback({ cancel: true });
         return;

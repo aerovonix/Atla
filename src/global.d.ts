@@ -6,6 +6,7 @@ import type {
   ChatStreamRequest,
   FetchModelsResponse,
   GenerateTitleResponse,
+  LocalModelResult,
   PersistedData,
   ProviderConfig,
   TerminalEvent,
@@ -13,8 +14,7 @@ import type {
   FileSaveResult,
   DashStatus,
   PermissionStatus,
-  UpdateState
-} from "../shared/types";
+  UpdateState, PaneKind, PaneMessage } from "../shared/types";
 import type { DashRequest } from "../shared/dashProtocol";
 import type { SystemInfo } from "../shared/environment";
 
@@ -35,12 +35,21 @@ export interface AtlaBridge {
     cancel: (requestId: string) => void;
     onEvent: (cb: (evt: ChatStreamEvent) => void) => () => void;
   };
+  models: {
+    list: (cfg: ProviderConfig) => Promise<LocalModelResult>;
+    capabilities: (cfg: ProviderConfig, model: string) => Promise<string[] | null>;
+    load: (cfg: ProviderConfig, model: string, keepAliveMinutes: number) => Promise<{ ok: boolean; error?: string }>;
+    unload: (cfg: ProviderConfig, model: string) => Promise<{ ok: boolean; error?: string }>;
+    cancelLoad: (providerId: string, model: string) => Promise<boolean>;
+  };
   provider: {
     fetchModels: (cfg: ProviderConfig) => Promise<FetchModelsResponse>;
     generateTitle: (args: { providerId: string; model: string; transcript: string }) => Promise<GenerateTitleResponse>;
   };
   browser: {
     partition: () => Promise<string>;
+    allowScripts: (host: string) => Promise<boolean>;
+    scriptsBlocked: (host: string) => Promise<number>;
     stats: () => Promise<AdblockStats>;
     onRpcRequest: (handler: (req: BrowserRpcRequest) => void) => () => void;
     respond: (payload: { id: string; ok: boolean; result?: unknown; error?: string }) => void;
@@ -67,11 +76,36 @@ export interface AtlaBridge {
     onRequest: (cb: (payload: { id: string; request: DashRequest }) => void) => () => void;
     reply: (id: string, payload: unknown) => void;
   };
+  pty: {
+    create: (opts: { cwd?: string; cols?: number; rows?: number }) => Promise<string | null>;
+    write: (id: string, data: string) => Promise<boolean>;
+    resize: (id: string, cols: number, rows: number) => Promise<boolean>;
+    kill: (id: string) => Promise<boolean>;
+    list: () => Promise<{ id: string; title: string; cwd: string; exited: boolean }[]>;
+    scrollback: (id: string) => Promise<string>;
+    unavailable: () => Promise<string | null>;
+    onData: (cb: (e: { id: string; data: string }) => void) => () => void;
+    onExit: (cb: (e: { id: string; code: number }) => void) => () => void;
+  };
+  windows: {
+    popOut: (pane: PaneKind) => Promise<boolean>;
+    dock: (pane: PaneKind) => Promise<boolean>;
+    popped: () => Promise<PaneKind[]>;
+    toMain: (message: PaneMessage) => Promise<boolean>;
+    onMessage: (cb: (m: PaneMessage) => void) => () => void;
+    onPopped: (cb: (panes: PaneKind[]) => void) => () => void;
+  };
+  settings: {
+    get: () => Promise<AppSettings | null>;
+    patch: (patch: Partial<AppSettings>) => Promise<AppSettings | null>;
+    onChanged: (cb: (s: AppSettings) => void) => () => void;
+  };
   update: {
     state: () => Promise<UpdateState>;
     check: () => Promise<UpdateState>;
     install: () => Promise<{ ok: boolean }>;
     setEnabled: (on: boolean) => Promise<UpdateState>;
+    setChannel: (channel: string) => Promise<UpdateState>;
     onState: (cb: (s: UpdateState) => void) => () => void;
   };
   permissions: {

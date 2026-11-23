@@ -39,16 +39,41 @@ export type ResourceKind =
 /**
  * How much of a page to load.
  *
- * - `full`: everything except trackers. Layout, images and fonts intact —
+ * Three tiers, each refusing strictly more than the last, so raising the
+ * setting can never load *more* of something than the tier below.
+ *
+ * - `normal`: everything except trackers. Layout, images and fonts intact —
  *   what someone actually looking at the page should get.
- * - `lean`: also drops images, media and fonts. Stylesheets and scripts stay,
- *   so the DOM still builds and client-rendered text still appears; it just
- *   looks wrong, which is fine when nobody is watching.
+ * - `fast`: also drops webfonts, video, embeds and subframes. Text reflows
+ *   into a fallback face and ad slots collapse, but the page is recognisably
+ *   itself and images still load.
+ * - `lightning`: also drops images and scripts. What is left is text and
+ *   layout — a reader view assembled by refusing bytes rather than by
+ *   rewriting the page.
+ *
+ * Blocking scripts is the largest saving available and also the most
+ * destructive: a client-rendered page without them has no text either, so
+ * lightning will render some sites completely blank. That is survivable only
+ * because it is detectable — the panel measures the rendered text after load
+ * and offers to re-run the page with scripts, per host. Without that escape
+ * hatch this tier would be a trap.
+ *
+ * Stylesheets survive every tier. They are cheap and dropping them makes text
+ * unreadable rather than merely plain.
  */
-export type LoadMode = "full" | "lean";
+export type SpeedTier = "normal" | "fast" | "lightning";
 
-/** Weight with no bearing on text. Dropped only when the panel is hidden. */
-const HEAVY: ReadonlySet<ResourceKind> = new Set(["image", "font", "media", "object"]);
+/**
+ * What each tier refuses, over and above trackers.
+ *
+ * Written out per tier rather than composed, so reading one line tells you
+ * everything that tier drops.
+ */
+const TIER_BLOCKS: Readonly<Record<SpeedTier, ReadonlySet<ResourceKind>>> = {
+  normal: new Set<ResourceKind>(),
+  fast: new Set<ResourceKind>(["font", "media", "object", "subFrame"]),
+  lightning: new Set<ResourceKind>(["font", "media", "object", "subFrame", "image", "script"])
+};
 
 /**
  * Pure telemetry. `ping` is hyperlink auditing, `cspReport` is a report-only
@@ -182,11 +207,25 @@ export function decideRequest(
   index: BlockIndex,
   url: string,
   kind: ResourceKind,
-  opts: { blockTrackers: boolean; mode: LoadMode }
+  opts: {
+    blockTrackers: boolean;
+    tier: SpeedTier;
+    /**
+     * Set once someone has asked for scripts on this host. Overrides the tier
+     * for scripts alone — the rest of lightning still applies, so a page
+     * rescued this way stays light apart from the thing that made it blank.
+     */
+    scriptsAllowed?: boolean;
+  }
 ): BlockDecision {
   if (kind === "mainFrame") return { block: false, reason: null };
   if (ALWAYS_DEAD.has(kind)) return { block: true, reason: "beacon" };
-  if (opts.mode === "lean" && HEAVY.has(kind)) return { block: true, reason: "weight" };
+  if (kind === "script" && opts.scriptsAllowed) {
+    // Fall through to tracker checks: rescuing a page's own scripts is not a
+    // reason to start loading its analytics.
+  } else if (TIER_BLOCKS[opts.tier].has(kind)) {
+    return { block: true, reason: "weight" };
+  }
   if (!opts.blockTrackers) return { block: false, reason: null };
 
   let host: string;
@@ -205,14 +244,50 @@ export function decideRequest(
 }
 
 /**
- * Which mode applies right now.
+ * The tier actually in force right now.
  *
- * The whole idea: when the panel is closed, the model is driving and nobody is
- * looking at the page. Downloading images and webfonts to render into a hidden
- * view is pure waste. When the panel is open, the page is for a person, so it
- * loads properly — the fast path never degrades what someone is actually
- * looking at.
+ * A hidden panel overrides the choice and drops to `lightning`: the model is
+ * driving, nobody is looking, and fetching images and webfonts to render into
+ * a view no one can see is pure waste. When the panel is open the person's own
+ * choice always wins, so the fast path never quietly degrades what someone is
+ * actually looking at.
  */
-export function modeFor(opts: { panelVisible: boolean }): LoadMode {
-  return opts.panelVisible ? "full" : "lean";
+export function tierFor(opts: {
+  panelVisible: boolean;
+  chosen: SpeedTier;
+  leanWhenHidden: boolean;
+}): SpeedTier {
+  if (!opts.panelVisible && opts.leanWhenHidden) return "lightning";
+  return opts.chosen;
+}
+
+/**
+ * The shortest page worth treating as real.
+ *
+ * Measured rather than chosen. With scripts stripped, pages that have
+ * something to say run to thousands of characters — Hacker News 3,880,
+ * react.dev 7,996, Wikipedia 22,436 — while example.com, a legitimate page
+ * with nothing much on it, comes to 142. A React shell with its scripts
+ * refused says "You need to enable JavaScript to run this app" in 45.
+ *
+ * So the interesting boundary sits between 45 and 142, and this sits in it.
+ * An earlier version guessed 200, which is above example.com, and fired on
+ * pages that were perfectly fine.
+ */
+export const BLANK_PAGE_LIMIT = 100;
+
+/**
+ * Whether to offer a blank-looking page its scripts back.
+ *
+ * Length alone is not evidence — short pages exist. The offer is only honest
+ * when we know we caused it, which is what `scriptsRefused` establishes.
+ */
+export function shouldOfferScripts(opts: {
+  tier: SpeedTier;
+  scriptsRefused: number;
+  textLength: number;
+}): boolean {
+  if (opts.tier !== "lightning") return false;
+  if (opts.scriptsRefused <= 0) return false;
+  return opts.textLength < BLANK_PAGE_LIMIT;
 }
