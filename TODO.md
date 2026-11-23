@@ -58,6 +58,7 @@ Everything here is written and runs on Windows, but has never executed on macOS.
 ## Linux
 
 - [ ] **Never built or run.** Config exists (AppImage + deb). Likely first stumbles: `<webview>` under Wayland, and the AppImage sandbox needing `chrome-sandbox` SUID on some distros.
+- [ ] **v0.7.0 shipped Windows-only, and that strands Linux rather than merely skipping it.** v0.6.1 carries `Atla-0.6.1-x86_64.AppImage`, a `.deb` and `latest-linux.yml`; v0.7.0 carries none of them, because `npm run release` was run on Windows and publishes only what it can build. A Linux updater asks the newest release for `latest-linux.yml`, gets a 404, and reports nothing — the silent-missing-file failure this repo has already paid for once. Either publish Linux artifacts to the v0.7.0 release (`electron-builder --linux --publish always` from Linux or WSL, which appends to the existing tag) or accept that Linux stays on 0.6.1 and say so somewhere a Linux user will look.
 
 ## Security posture
 

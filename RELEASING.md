@@ -114,6 +114,37 @@ a full download of the whole installer rather than a differential one. v0.6.0
 has no blockmap for the same reason. Neither is worth backfilling, but neither
 should happen again.
 
+## Two things `npm run release` leaves half-done
+
+Both of these bit v0.7.0 and both are silent, so check for them every time.
+
+1. **electron-builder creates the GitHub release as a draft.** A draft is
+   invisible to everyone and every asset URL under it answers `404`, so the
+   release looks published from the build log and is not published at all.
+   Finish it explicitly:
+
+   ```bash
+   gh release edit v0.7.0 --draft=false --latest --title "Atla v0.7.0"
+   ```
+
+   The title is worth passing: electron-builder names the release `0.7.0`,
+   while every release before it is named `Atla v0.7.0`.
+
+2. **The publisher can run twice and split the assets across two releases.**
+   On v0.7.0 the log printed `creating GitHub release` twice for the same tag
+   and produced two releases: the real one with the installer and the feed, and
+   a second draft holding nothing but the blockmap — which is exactly how the
+   blockmap goes missing without anyone touching anything by hand. Count the
+   releases on the tag, not just the assets on one of them:
+
+   ```bash
+   gh api repos/<owner>/Atla/releases --jq \
+     '.[] | select(.tag_name=="v0.7.0") | "\(.id) \(.name) draft=\(.draft) assets=\(.assets|length)"'
+   ```
+
+   One line, three assets. Any extra release on the tag should be deleted by
+   id, after moving anything only it holds onto the real one.
+
 ## Filenames
 
 Artifact names must not contain spaces. GitHub rewrites spaces in uploaded
