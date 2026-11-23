@@ -79,6 +79,38 @@ Everything here is written and runs on Windows, but has never executed on macOS.
 - **CC BY-NC-SA for code.** Creative Commons recommends against it for software — no patent grant, and "NonCommercial" is ambiguous in practice. PolyForm Noncommercial is the code-native equivalent if that ambiguity ever becomes a real problem rather than a theoretical one.
 - **A native automation module** for desktop control. Per-platform rebuilds pinned to each Electron version aren't worth it; the platform's own scripting works.
 
+## Electron 45 + certificate trust
+
+Bumped 44.1.1 → 45.4.1 to pick up a newer Chromium root store, prompted by
+the November 2026 eMudhra/emSign key compromise. Soaked on Windows before
+0.7.0 went out: the installed build ran, search and the certificate handling
+both checked by hand, and `node-pty` spawns under the new ABI (the likeliest
+breakage, since 45 crosses an ABI boundary).
+
+What the bump does **not** fix, and the reason it can't: every outbound
+request in the app goes through Node's `fetch` — `providers.ts`,
+`fetcher.ts`, `modelList.ts`, `localModels.ts` — so it is verified against
+the CA list compiled into Electron, never the Windows certificate store.
+Windows received the eMudhra distrust through its automatic trust-update
+endpoint on 16 November and Atla cannot see it. Worse, that distrust is a
+date rule — reject certificates logged after the cutoff, keep the older ones
+— and Node's root store is a flat list of PEMs with nowhere to put a rule.
+Chromium can express it; Node cannot. So bumping Electron refreshes the
+snapshot without making the Node path capable of enforcing this class of
+distrust at all.
+
+Nothing in the app weakens TLS on purpose: no `rejectUnauthorized`, no
+`NODE_TLS_REJECT_UNAUTHORIZED`, no bundled CA file, no custom verify
+procedure. The gap is entirely about which store is consulted.
+
+- [ ] Move outbound requests to Electron's `net.fetch`, which verifies through
+      Chromium and honours the OS distrust list. Needs a proxy bypass for a
+      LAN Ollama (`http://192.168.40.2:11434` here) — `net.fetch` applies
+      Chromium's proxy resolution, which Node's `fetch` does not. This is the
+      part the Electron bump does **not** buy; the bump only refreshes the
+      snapshot.
+- [x] Soak the 45 bump — `node-pty` spawns, terminal works.
+
 ## Electron 44 (on `testing`, needs soak)
 
 Upgraded from Electron 32.3.3 to 44.1.1 — Chromium 128 to 152, about two

@@ -246,6 +246,7 @@ Light mode uses a deeper `#c2410c` for accent *text* since the raw brand orange 
 - Gemini can't combine its native search grounding with function calling in one request; Atla picks one per message (see **Built-in browser**). A `quiet_search` while other tools are on is run as a grounded request of its own instead, which costs one extra provider request per search.
 - File reads are capped at 512KB and skip anything that looks binary. `edit_file` needs an exact, unique match.
 - Approvals are per-run and per-kind; "Allow for this session" is never persisted, so a restart puts the gate back.
+- Provider and web requests go out through Node's `fetch`, so they trust the CA list compiled into whichever Electron built the app — not the OS certificate store. Two things follow. A root distrusted after that build keeps being trusted until Electron is bumped, and a distrust expressed as a date rule ("reject certificates logged after D", which is how the November 2026 eMudhra/emSign removal was done) can't be enforced at all, because Node's root list is flat and has no way to say it. The browser panel is unaffected — it goes through Chromium. Moving outbound requests to Electron's `net.fetch` would put them on Chromium's verifier and the OS distrust list; see TODO.md.
 
 ## Contributing
 
